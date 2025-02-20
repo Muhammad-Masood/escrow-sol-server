@@ -1,281 +1,282 @@
-use axum::{
-    extract::Json,
-    routing::{get, post},
-    Router,
+// use solana_program::pubkey::Pubkey;
+use solana_client::rpc_client::RpcClient;
+use solana_sdk::{
+    instruction::Instruction,
+    signature::{Keypair, Signer},
+    transaction::Transaction,
+    system_program,
+    commitment_config::CommitmentConfig,
+    program_pack::Pack,
+    pubkey::Pubkey,
 };
 use anchor_lang::InstructionData;
-use borsh::{BorshSerialize, BorshDeserialize};
 use serde::{Deserialize, Serialize};
-use solana_sdk::{
-    instruction::{AccountMeta, Instruction},
-    pubkey::Pubkey,
-    signature::{Keypair, Signer},
-    system_program,
-    transaction::Transaction,
-};
-use solana_client::rpc_client::RpcClient;
-use anchor_lang::prelude::*;
-use tokio::net::TcpListener;
+use warp::Filter;
+use solana_sdk::instruction::AccountMeta;
 use std::str::FromStr;
+use escrow_project::instruction::{StartSubscription, ExtendSubscription, Prove, EndSubscriptionByBuyer, EndSubscriptionByServer};
+use warp::reject::Reject;
+use solana_client::client_error::ClientError;
 
-const PROGRAM_ID: &str = "9hzPKhXhtHNcWcHRQChc1otQfJHgCpsJKj2ofjC6YYmw";
-// const PROGRAM_ID: &str = "CMUGDifD2QbDVs5dvMWhm1Y4a4v8Sh9frE37XX9BGnS";
-// const PROGRAM_ID: &str = "ACTncW7Szs5JW6TBo4xeSAzaYFqNjGnCeXLUsChbECxv";
-const RPC_URL: &str = "https://api.devnet.solana.com";
+#[derive(Debug)]
+struct CustomClientError(ClientError);
 
-#[derive(Deserialize)]
+impl Reject for CustomClientError {}
+
+const PROGRAM_ID: &str = "HPFKvGvdtChrFrfqzAYzbNZJ3sRKw9HDHMKWgtZg1oNs";
+// const RPC_URL: &str = "https://api.localnet.solana.com";
+const RPC_URL: &str = "http://127.0.0.1:8899";
+
+#[derive(Serialize, Deserialize)]
 struct StartSubscriptionRequest {
+    query_size: u64,
+    number_of_blocks: u64,
+    x: u64,
+    g: u64,
+    v: u64,
+    u: u64,
     buyer_private_key: String,
-    seller_pubkey: String,
-    subscription_id: String,
-    validation_threshold: u64,
 }
 
-#[derive(Serialize)]
-struct ApiResponse {
+#[derive(Serialize, Deserialize)]
+struct ExtendSubscriptionRequest {
+    buyer_private_key: String,
+    escrow_pubkey: String,
+}
+
+#[derive(Serialize, Deserialize)]
+struct ProveRequest {
+    seller_private_key: String,
+    escrow_pubkey: String,
+    buyer_pubkey: String,
+    sigma: u64,
+    mu: u64,
+}
+
+#[derive(Serialize, Deserialize)]
+struct EndSubscriptionByBuyerRequest {
+    buyer_private_key: String,
+    seller_pubkey: String,
+    escrow_pubkey: String,
+}
+
+#[derive(Serialize, Deserialize)]
+struct StartSubscriptionResponse {
+    escrow_pubkey: String,
+}
+
+#[derive(Serialize, Deserialize)]
+struct ExtendSubscriptionResponse {
     message: String,
 }
 
-#[derive(AnchorSerialize, AnchorDeserialize)]
-struct StartSubscriptionData {
-    subscription_id: String,
-    validation_threshold: u64,
-}
-
-#[derive(Deserialize)]
-struct MakePaymentRequest {
-    buyer_private_key: String,
-    seller_pubkey: String,
-    subscription_id: String,
-    amount: u64,
-}
-
-#[derive(Deserialize)]
-struct CancelSubscriptionRequest {
-    buyer_private_key: String,
-    seller_pubkey: String,
-    subscription_id: String,
-}
-
-#[derive(Deserialize)]
-struct WithdrawFundsRequest {
-    seller_private_key: String,
-    buyer_pubkey: String,
-    subscription_id: String,
-    validation_data: u64,
-}
-
-#[derive(BorshSerialize, BorshDeserialize)]
-struct MakePaymentData {
-    amount: u64,
-}
-
-#[derive(BorshSerialize, BorshDeserialize)]
-struct CancelSubscriptionData {}  // No fields needed
-
-#[derive(BorshSerialize, BorshDeserialize)]
-struct WithdrawFundsData {
-    validation_data: u64,
-}
-
-
-async fn home() -> Json<ApiResponse> {
-    Json(ApiResponse {
-        message: "Welcome to the Solana Escrow!".to_string(),
-    })
-}
-
-// Start Subscription API
-async fn start_subscription(Json(payload): Json<StartSubscriptionRequest>) -> Json<ApiResponse> {
-    let rpc_client = RpcClient::new(RPC_URL.to_string());
-    
-    // Convert keys
-    let buyer_keypair = Keypair::from_base58_string(&payload.buyer_private_key);
-    let seller_pubkey = Pubkey::from_str(&payload.seller_pubkey).unwrap();
-    let program_id = Pubkey::from_str(PROGRAM_ID).unwrap();
-
-    // Derive escrow account PDA
-    let (escrow_account, _bump) = Pubkey::find_program_address(
-        &[
-            b"escrow",
-            buyer_keypair.pubkey().as_ref(),
-            seller_pubkey.as_ref(),
-            payload.subscription_id.as_bytes(),
-        ],
-        &program_id,
-    );
-    println!("{}",PROGRAM_ID);
-    // Create transaction to call `start_subscription`
-    let instruction_data = StartSubscriptionData {
-        subscription_id: payload.subscription_id.clone(),
-        validation_threshold: payload.validation_threshold,
-    };
-
-    let ix = Instruction {
-        program_id,
-        accounts: vec![
-        AccountMeta::new(escrow_account, false),
-        AccountMeta::new(buyer_keypair.pubkey(), true), 
-        AccountMeta::new_readonly(seller_pubkey, false), 
-        AccountMeta::new_readonly(system_program::id(), false),
-        ],
-        data: instruction_data.try_to_vec().unwrap(), // Serialize data
-    };
-
-    let recent_blockhash = rpc_client.get_latest_blockhash().unwrap();
-
-    let mut transaction = Transaction::new_with_payer(&[ix], Some(&buyer_keypair.pubkey()));
-    transaction.sign(&[&buyer_keypair], recent_blockhash);
-
-    match rpc_client.send_and_confirm_transaction(&transaction) {
-        Ok(sig) => Json(ApiResponse {
-            message: format!("Transaction sent! Signature: {}", sig),
-        }),
-        Err(err) => Json(ApiResponse {
-            message: format!("Error: {:?}", err),
-        }),
-    }
-}
-
-async fn make_payment(Json(payload): Json<MakePaymentRequest>) -> Json<ApiResponse> {
-    let rpc_client = RpcClient::new(RPC_URL.to_string());
-
-    let buyer_keypair = Keypair::from_base58_string(&payload.buyer_private_key);
-    let seller_pubkey = Pubkey::from_str(&payload.seller_pubkey).unwrap();
-    let program_id = Pubkey::from_str(PROGRAM_ID).unwrap();
-
-    let (escrow_account, _bump) = Pubkey::find_program_address(
-        &[
-            b"escrow",
-            buyer_keypair.pubkey().as_ref(),
-            seller_pubkey.as_ref(),
-            payload.subscription_id.as_bytes(),
-        ],
-        &program_id,
-    );
-    let instruction_data = MakePaymentData {
-        amount: payload.amount,
-    };
-    let ix = Instruction {
-        program_id,
-        accounts: vec![
-            AccountMeta::new(escrow_account, false),
-            AccountMeta::new_readonly(buyer_keypair.pubkey(), true),
-            AccountMeta::new_readonly(seller_pubkey, false),
-            AccountMeta::new_readonly(system_program::id(), false),
-        ],
-        // data: anchor_lang::InstructionData::data(&(payload.amount)),
-        data: instruction_data.try_to_vec().unwrap(),
-    };
-
-    let recent_blockhash = rpc_client.get_latest_blockhash().unwrap();
-    let mut transaction = Transaction::new_with_payer(&[ix], Some(&buyer_keypair.pubkey()));
-    transaction.sign(&[&buyer_keypair], recent_blockhash);
-
-    match rpc_client.send_and_confirm_transaction(&transaction) {
-        Ok(sig) => Json(ApiResponse {
-            message: format!("Payment successful! Signature: {}", sig),
-        }),
-        Err(err) => Json(ApiResponse {
-            message: format!("Error: {:?}", err),
-        }),
-    }
-}
-
-async fn cancel_subscription(Json(payload): Json<CancelSubscriptionRequest>) -> Json<ApiResponse> {
-    let rpc_client = RpcClient::new(RPC_URL.to_string());
-
-    let buyer_keypair = Keypair::from_base58_string(&payload.buyer_private_key);
-    let seller_pubkey = Pubkey::from_str(&payload.seller_pubkey).unwrap();
-    let program_id = Pubkey::from_str(PROGRAM_ID).unwrap();
-
-    let (escrow_account, _bump) = Pubkey::find_program_address(
-        &[
-            b"escrow",
-            buyer_keypair.pubkey().as_ref(),
-            seller_pubkey.as_ref(),
-            payload.subscription_id.as_bytes(),
-        ],
-        &program_id,
-    );
-    let instruction_data = CancelSubscriptionData {};
-    let ix = Instruction {
-        program_id,
-        accounts: vec![
-            AccountMeta::new(escrow_account, false),
-            AccountMeta::new_readonly(buyer_keypair.pubkey(), true),
-            AccountMeta::new_readonly(seller_pubkey, false),
-        ],
-        // data: anchor_lang::InstructionData::data(&()), // No extra parameters needed
-        data: instruction_data.try_to_vec().unwrap(),
-    };
-
-    let recent_blockhash = rpc_client.get_latest_blockhash().unwrap();
-    let mut transaction = Transaction::new_with_payer(&[ix], Some(&buyer_keypair.pubkey()));
-    transaction.sign(&[&buyer_keypair], recent_blockhash);
-
-    match rpc_client.send_and_confirm_transaction(&transaction) {
-        Ok(sig) => Json(ApiResponse {
-            message: format!("Subscription canceled! Signature: {}", sig),
-        }),
-        Err(err) => Json(ApiResponse {
-            message: format!("Error: {:?}", err),
-        }),
-    }
-}
-
-async fn withdraw_funds(Json(payload): Json<WithdrawFundsRequest>) -> Json<ApiResponse> {
-    let rpc_client = RpcClient::new(RPC_URL.to_string());
-
-    let seller_keypair = Keypair::from_base58_string(&payload.seller_private_key);
-    let buyer_pubkey = Pubkey::from_str(&payload.buyer_pubkey).unwrap();
-    let program_id = Pubkey::from_str(PROGRAM_ID).unwrap();
-
-    let (escrow_account, _bump) = Pubkey::find_program_address(
-        &[
-            b"escrow",
-            buyer_pubkey.as_ref(),
-            seller_keypair.pubkey().as_ref(),
-            payload.subscription_id.as_bytes(),
-        ],
-        &program_id,
-    );
-    let instruction_data = WithdrawFundsData {
-        validation_data: payload.validation_data,
-    };
-    let ix = Instruction {
-        program_id,
-        accounts: vec![
-            AccountMeta::new(escrow_account, false),
-            AccountMeta::new_readonly(buyer_pubkey, false),
-            AccountMeta::new_readonly(seller_keypair.pubkey(), true),
-        ],
-        data: instruction_data.try_to_vec().unwrap(),
-    };
-
-    let recent_blockhash = rpc_client.get_latest_blockhash().unwrap();
-    let mut transaction = Transaction::new_with_payer(&[ix], Some(&seller_keypair.pubkey()));
-    transaction.sign(&[&seller_keypair], recent_blockhash);
-
-    match rpc_client.send_and_confirm_transaction(&transaction) {
-        Ok(sig) => Json(ApiResponse {
-            message: format!("Funds withdrawn! Signature: {}", sig),
-        }),
-        Err(err) => Json(ApiResponse {
-            message: format!("Error: {:?}", err),
-        }),
-    }
+#[derive(Serialize, Deserialize)]
+struct ProveResponse {
+    message: String,
 }
 
 #[tokio::main]
 async fn main() {
-    let app = Router::new()
-    .route("/hello", get(home))
-    .route("/start_subscription", post(start_subscription))
-    .route("/make_payment", post(make_payment))
-    .route("/cancel_subscription", post(cancel_subscription))
-    .route("/withdraw_funds", post(withdraw_funds));
+    let start_subscription = warp::post()
+        .and(warp::path("start_subscription"))
+        .and(warp::body::json())
+        .and_then(start_subscription_handler);
+    
+    let extend_subscription = warp::post()
+        .and(warp::path("extend_subscription"))
+        .and(warp::body::json())
+        .and_then(extend_subscription_handler);
+    
+    let prove = warp::post()
+        .and(warp::path("prove"))
+        .and(warp::body::json())
+        .and_then(prove_handler);
 
-    let listener = TcpListener::bind("127.0.0.1:3000").await.unwrap();
-    axum::serve(listener, app).await.unwrap();
+    let end_sub_by_buyer = warp::post()
+        .and(warp::path("end_subscription_by_buyer"))
+        .and(warp::body::json())
+        .and_then(end_subscription_by_buyer_handler);
+
+    let end_sub_by_server = warp::post()
+        .and(warp::path("end_subscription_by_server"))
+        .and(warp::body::json())
+        .and_then(end_subscription_by_server_handler);
+
+    let routes = start_subscription.or(extend_subscription).or(prove).or(end_sub_by_buyer).or(end_sub_by_server);
+    println!("Server running at http://127.0.0.1:3030/");
+    warp::serve(routes).run(([127, 0, 0, 1], 3030)).await;
+}
+
+async fn start_subscription_handler(request: StartSubscriptionRequest) -> Result<impl warp::Reply, warp::Rejection> {
+    let rpc_client = RpcClient::new(RPC_URL.to_string());
+    let program_id = Pubkey::from_str(PROGRAM_ID).unwrap();
+    let buyer_keypair = Keypair::from_base58_string(&request.buyer_private_key);
+    let buyer_pubkey = buyer_keypair.pubkey();
+
+    let (escrow_pda, bump) = Pubkey::find_program_address(&[b"escrow", buyer_pubkey.as_ref()], &program_id);
+
+    let instruction = Instruction {
+        program_id,
+        accounts: vec![
+            AccountMeta::new(escrow_pda, false),
+            AccountMeta::new(buyer_pubkey, true),
+            AccountMeta::new_readonly(system_program::ID, false),
+        ],
+        data: StartSubscription {
+            query_size: request.query_size,
+            number_of_blocks: request.number_of_blocks,
+            x: request.x,
+            g: request.g,
+            v: request.v,
+            u: request.u,
+        }.data(),
+    };
+
+    let blockhash = rpc_client.get_latest_blockhash().unwrap();
+    let tx = Transaction::new_signed_with_payer(
+        &[instruction],
+        Some(&buyer_pubkey),
+        &[&buyer_keypair],
+        blockhash,
+    );
+
+    match rpc_client.send_and_confirm_transaction(&tx) {
+        Ok(_) => Ok(warp::reply::json(&StartSubscriptionResponse { escrow_pubkey: escrow_pda.to_string() })),
+        // Ok(sig) => Ok(warp::reply::json(&sig)),
+        Err(err) => Err(warp::reject::custom(CustomClientError(err)))
+        // Err(err) => Err(warp::reject::custom(err)),
+    }
+}
+
+// Called by the Buyer
+async fn extend_subscription_handler(request: ExtendSubscriptionRequest) -> Result<impl warp::Reply, warp::Rejection> {
+    let rpc_client = RpcClient::new(RPC_URL.to_string());
+    let program_id = Pubkey::from_str(PROGRAM_ID).unwrap();
+    let buyer_keypair = Keypair::from_base58_string(&request.buyer_private_key);
+    let buyer_pubkey = buyer_keypair.pubkey();
+    let escrow_pubkey = Pubkey::from_str(&request.escrow_pubkey).unwrap();
+
+    let instruction = Instruction {
+        program_id,
+        accounts: vec![
+            AccountMeta::new(escrow_pubkey, false),
+            AccountMeta::new(buyer_pubkey, true),
+            AccountMeta::new_readonly(system_program::ID, false),
+        ],
+        data: ExtendSubscription {}.data(),
+    };
+
+    let blockhash = rpc_client.get_latest_blockhash().unwrap();
+    let tx = Transaction::new_signed_with_payer(
+        &[instruction],
+        Some(&buyer_pubkey),
+        &[&buyer_keypair],
+        blockhash,
+    );
+    match rpc_client.send_and_confirm_transaction(&tx) {
+        Ok(_) => Ok(warp::reply::json(&ExtendSubscriptionResponse { message: "Subscription extended successfully".to_string() })),
+        Err(err) => Err(warp::reject::custom(CustomClientError(err)))
+    }
+}
+
+// Called by the Seller
+async fn prove_handler(request: ProveRequest) -> Result<impl warp::Reply, warp::Rejection> {
+    let rpc_client = RpcClient::new(RPC_URL.to_string());
+    let program_id = Pubkey::from_str(PROGRAM_ID).unwrap();
+    let seller_keypair = Keypair::from_base58_string(&request.seller_private_key);
+    let seller_pubkey = seller_keypair.pubkey();
+    let escrow_pubkey = Pubkey::from_str(&request.escrow_pubkey).unwrap();
+    let buyer_pubkey = Pubkey::from_str(&request.buyer_pubkey).unwrap();
+
+    let instruction = Instruction {
+        program_id,
+        accounts: vec![
+            AccountMeta::new(escrow_pubkey, false),
+            AccountMeta::new(seller_pubkey, true),
+            AccountMeta::new(buyer_pubkey, false),
+            // AccountMeta::new_readonly(system_program::ID, false),
+        ],
+        data: Prove {
+            sigma: request.sigma,
+            mu: request.mu,
+        }
+        .data(),
+    };
+
+    let blockhash = rpc_client.get_latest_blockhash().unwrap();
+    let tx = Transaction::new_signed_with_payer(
+        &[instruction],
+        Some(&seller_pubkey),
+        &[&seller_keypair],
+        blockhash,
+    );
+
+    match rpc_client.send_and_confirm_transaction(&tx) {
+        Ok(_) => Ok(warp::reply::json(&ProveResponse { message: "Proof submitted successfully".to_string() })),
+        Err(err) => Err(warp::reject::custom(CustomClientError(err)))
+    }
+}
+
+async fn end_subscription_by_buyer_handler(request: EndSubscriptionByBuyerRequest) -> Result<impl warp::Reply, warp::Rejection> {
+    let rpc_client = RpcClient::new(RPC_URL.to_string());
+    let program_id = Pubkey::from_str(PROGRAM_ID).unwrap();
+    let buyer_keypair = Keypair::from_base58_string(&request.buyer_private_key);
+    let buyer_pubkey = buyer_keypair.pubkey();
+    let escrow_pubkey = Pubkey::from_str(&request.escrow_pubkey).unwrap();
+    let seller_pubkey = Pubkey::from_str(&request.seller_pubkey).unwrap();
+
+    let instruction = Instruction {
+        program_id,
+        accounts: vec![
+            AccountMeta::new(escrow_pubkey, false),
+            AccountMeta::new(buyer_pubkey, true),
+            AccountMeta::new(seller_pubkey, false),
+            // AccountMeta::new_readonly(system_program::ID, false),
+        ],
+        data: EndSubscriptionByBuyer {}.data(),
+    };
+
+    let blockhash = rpc_client.get_latest_blockhash().unwrap();
+    let tx = Transaction::new_signed_with_payer(
+        &[instruction],
+        Some(&buyer_pubkey),
+        &[&buyer_keypair],
+        blockhash,
+    );
+
+    match rpc_client.send_and_confirm_transaction(&tx) {
+        Ok(_) => Ok(warp::reply::json(&ExtendSubscriptionResponse { message: "Subscription ended successfully by buyer".to_string() })),
+        Err(err) => Err(warp::reject::custom(CustomClientError(err)))
+    }
+}
+
+async fn end_subscription_by_server_handler(request: ExtendSubscriptionRequest) -> Result<impl warp::Reply, warp::Rejection> {
+    let rpc_client = RpcClient::new(RPC_URL.to_string());
+    let program_id = Pubkey::from_str(PROGRAM_ID).unwrap();
+    let buyer_keypair = Keypair::from_base58_string(&request.buyer_private_key);
+    let buyer_pubkey = buyer_keypair.pubkey();
+    let escrow_pubkey = Pubkey::from_str(&request.escrow_pubkey).unwrap();
+
+    let instruction = Instruction {
+        program_id,
+        accounts: vec![
+            AccountMeta::new(escrow_pubkey, false),
+            AccountMeta::new(buyer_pubkey, true),
+            // AccountMeta::new_readonly(system_program::ID, false),
+        ],
+        data: EndSubscriptionByServer {}.data(),
+    };
+
+    let blockhash = rpc_client.get_latest_blockhash().unwrap();
+    let tx = Transaction::new_signed_with_payer(
+        &[instruction],
+        Some(&buyer_pubkey),
+        &[&buyer_keypair],
+        blockhash,
+    );
+
+    match rpc_client.send_and_confirm_transaction(&tx) {
+        Ok(_) => Ok(warp::reply::json(&ExtendSubscriptionResponse { message: "Subscription ended successfully by server".to_string() })),
+        Err(err) => Err(warp::reject::custom(CustomClientError(err)))
+    }
 }
