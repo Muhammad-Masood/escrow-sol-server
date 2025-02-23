@@ -18,6 +18,7 @@ use escrow_project::instruction::{AddFundsToSubscription, StartSubscription, Pro
 use warp::reject::Reject;
 use std::num::ParseIntError;
 use solana_client::client_error::ClientError;
+use std::time::{SystemTime, UNIX_EPOCH};
 // use solana_sdk::sysvar::slot_hashes;
 
 fn serialize_bytes<S>(bytes: &[u8; 48], serializer: S) -> Result<S::Ok, S::Error>
@@ -69,7 +70,7 @@ impl From<ParseIntError> for CClientError {
 }
 impl Reject for CClientError {}
 
-const PROGRAM_ID: &str = "CFvp4pXkyqaEDqgZ6sXy4TP8aVjvxr1ztAZWyG8h1CW";
+const PROGRAM_ID: &str = "8UVF6guKqwz7JsPzRaKRcn2Q7CZPFtZY7gXYCMhJ3uTQ";
 // const RPC_URL: &str = "https://api.localnet.solana.com";
 const RPC_URL: &str = "http://127.0.0.1:8899";
 
@@ -118,6 +119,8 @@ struct EndSubscriptionBySellerRequest {
 
 #[derive(Serialize, Deserialize)]
 struct RequestFundsRequest {
+    subscription_id: u64,
+    buyer_pubkey: String,
     user_private_key: String,  // Can be buyer or seller
     escrow_pubkey: String,
 }
@@ -128,11 +131,10 @@ struct GenerateQueriesRequest {
     user_private_key: String,
 }
 
-
-
 #[derive(Serialize, Deserialize)]
 struct StartSubscriptionResponse {
     escrow_pubkey: String,
+    subscription_id: u64,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -193,8 +195,16 @@ async fn start_subscription_handler(request: StartSubscriptionRequest) -> Result
     let buyer_keypair = Keypair::from_base58_string(&request.buyer_private_key);
     let buyer_pubkey = buyer_keypair.pubkey();
     let seller_pubkey = Pubkey::from_str(&request.seller_pubkey).unwrap();
+    let subscription_id = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
 
-    let (escrow_pda, bump) = Pubkey::find_program_address(&[b"escrow", buyer_pubkey.as_ref()], &program_id);
+    // let (escrow_pda, bump) = Pubkey::find_program_address(&[b"escrow", buyer_pubkey.as_ref()], &program_id);
+    
+    let (escrow_pda, bump) = Pubkey::find_program_address(&[
+        b"escrow",
+        buyer_pubkey.as_ref(),
+        seller_pubkey.as_ref(),
+        &subscription_id.to_le_bytes()
+    ], &program_id);
 
     let instruction = Instruction {
         program_id,
@@ -205,6 +215,7 @@ async fn start_subscription_handler(request: StartSubscriptionRequest) -> Result
             AccountMeta::new_readonly(system_program::ID, false),
         ],
         data: StartSubscription {
+            subscription_id,
             query_size: request.query_size,
             number_of_blocks: request.number_of_blocks,
             g: request.g,
@@ -223,7 +234,7 @@ async fn start_subscription_handler(request: StartSubscriptionRequest) -> Result
     );
 
     match rpc_client.send_and_confirm_transaction(&tx) {
-        Ok(_) => Ok(warp::reply::json(&StartSubscriptionResponse { escrow_pubkey: escrow_pda.to_string() })),
+        Ok(_) => Ok(warp::reply::json(&StartSubscriptionResponse { subscription_id: subscription_id, escrow_pubkey: escrow_pda.to_string() })),
         // Ok(sig) => Ok(warp::reply::json(&sig)),
         Err(err) => Err(warp::reject::custom(CustomClientError(err)))
         // Err(err) => Err(warp::reject::custom(err)),
@@ -362,17 +373,34 @@ async fn end_subscription_by_seller_handler(request: EndSubscriptionBySellerRequ
     }
 }
 
+// seller_private_key: 4UjX4juDaepkfuT2L42eq1arBmeXPpcex8GDjCocnsHTkRbPdvns9ZoEpMjMbkYCFD1FjzY2FVa5UV1F6W4vGwbj
+// seller_public_key: AJXFEkiVqyU8eccGJAsx4cgGFWdoUqMG6Yc5K1WixNoP
 async fn request_funds_handler(request: RequestFundsRequest) -> Result<impl warp::Reply, warp::Rejection> {
     let rpc_client = RpcClient::new(RPC_URL.to_string());
     let program_id = Pubkey::from_str(PROGRAM_ID).unwrap();
     let user_keypair = Keypair::from_base58_string(&request.user_private_key);
     let user_pubkey = user_keypair.pubkey();
-    let escrow_pubkey = Pubkey::from_str(&request.escrow_pubkey).unwrap();
+    let buyer_pubkey = Pubkey::from_str(&request.buyer_pubkey).unwrap();
+    // let escrow_pubkey = Pubkey::from_str(&request.escrow_pubkey).unwrap();
+    let subscription_id = request.subscription_id;
+
+    let (escrow_pda, _bump) = Pubkey::find_program_address(
+        &[
+            b"escrow",
+            buyer_pubkey.as_ref(),
+            // Seller pubkey should be fetched from escrow state (replace this with actual seller pubkey)
+            user_pubkey.as_ref(), 
+            &subscription_id.to_le_bytes(),
+        ],
+        &program_id
+    );
+
+    println!("Client-side PDA: {}", escrow_pda);
 
     let instruction = Instruction {
         program_id,
         accounts: vec![
-            AccountMeta::new(escrow_pubkey, false),
+            AccountMeta::new(escrow_pda, false),
             AccountMeta::new(user_pubkey, true),
             AccountMeta::new_readonly(system_program::ID, false),
         ],

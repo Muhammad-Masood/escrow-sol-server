@@ -1,0 +1,85 @@
+Start Subscription
+
+curl -X POST http://127.0.0.1:3030/start_subscription \
+     -H "Content-Type: application/json" \
+     -d '{
+       "query_size": <QUERY_SIZE>,
+       "number_of_blocks": <NUMBER_OF_BLOCKS>,
+       "u": "<BASE64_ENCODED_48_BYTES>",
+       "g": "<BASE64_ENCODED_96_BYTES>",
+       "v": "<BASE64_ENCODED_96_BYTES>",
+       "validate_every": <VALIDATION_INTERVAL>,
+       "buyer_private_key": "<BUYER_PRIVATE_KEY>",
+       "seller_pubkey": "<SELLER_PUBLIC_KEY>"
+     }'
+
+Response: { "escrow_pubkey": "<ESCROW_ACCOUNT_PUBKEY>" }
+
+Add Funds to Subscription
+
+curl -X POST http://127.0.0.1:3030/add_funds_to_subscription \
+     -H "Content-Type: application/json" \
+     -d '{
+       "buyer_private_key": "<BUYER_PRIVATE_KEY>",
+       "escrow_pubkey": "<ESCROW_ACCOUNT_PUBKEY>",
+       "amount": <AMOUNT_TO_ADD>
+     }'
+
+Response: { "message": "Subscription extended successfully" }
+
+Prove Subscription
+
+curl -X POST http://127.0.0.1:3030/prove \
+     -H "Content-Type: application/json" \
+     -d '{
+       "seller_private_key": "<SELLER_PRIVATE_KEY>",
+       "escrow_pubkey": "<ESCROW_ACCOUNT_PUBKEY>",
+       "sigma": "<BASE64_ENCODED_48_BYTES>",
+       "mu": "<MU_VALUE_AS_STRING>"
+     }'
+
+Response: { "message": "Proof submitted successfully" }
+
+End Subscription (Buyer)
+
+curl -X POST http://127.0.0.1:3030/end_subscription_by_buyer \
+     -H "Content-Type: application/json" \
+     -d '{
+       "buyer_private_key": "<BUYER_PRIVATE_KEY>",
+       "escrow_pubkey": "<ESCROW_ACCOUNT_PUBKEY>"
+     }'
+
+Response: { "message": "Subscription ended successfully by buyer" }
+
+End Subscription (Seller)
+
+curl -X POST http://127.0.0.1:3030/end_subscription_by_seller \
+     -H "Content-Type: application/json" \
+     -d '{
+       "seller_private_key": "<SELLER_PRIVATE_KEY>",
+       "escrow_pubkey": "<ESCROW_ACCOUNT_PUBKEY>"
+     }'
+
+Response: { "message": "Subscription ended successfully by seller" }
+
+Request Funds
+
+curl -X POST http://127.0.0.1:3030/request_funds \
+     -H "Content-Type: application/json" \
+     -d '{
+       "user_private_key": "<BUYER_OR_SELLER_PRIVATE_KEY>",
+       "escrow_pubkey": "<ESCROW_ACCOUNT_PUBKEY>"
+     }'
+
+Response: { "message": "Funds requested successfully" }
+
+Generate Queries
+
+curl -X POST http://127.0.0.1:3030/generate_queries \
+     -H "Content-Type: application/json" \
+     -d '{
+       "escrow_pubkey": "<ESCROW_ACCOUNT_PUBKEY>",
+       "user_private_key": "<USER_PRIVATE_KEY>"
+     }'
+     
+Response: { "message": "Queries generated successfully" }
