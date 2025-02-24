@@ -89,6 +89,26 @@ mod hex_array_48 {
     }
 }
 
+mod hex_array_32 {
+    use serde::{Deserialize, Serialize};
+    use super::HexArray;
+
+    pub fn serialize<S>(value: &[u8; 32], serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        HexArray(*value).serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<[u8; 32], D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let array = HexArray::<32>::deserialize(deserializer)?;
+        Ok(array.0)
+    }
+}
+
 #[derive(Debug)]
 struct CustomClientError(ClientError);
 
@@ -140,7 +160,8 @@ struct ProveRequest {
     escrow_pubkey: String,
     #[serde(with = "hex_array_48")]
     sigma: [u8; 48],
-    mu: String,
+    #[serde(with = "hex_array_32")]
+    mu: [u8; 32],
 }
 
 #[derive(Serialize, Deserialize)]
@@ -340,8 +361,7 @@ async fn prove_handler(request: ProveRequest) -> Result<impl warp::Reply, warp::
     let seller_keypair = Keypair::from_base58_string(&request.seller_private_key);
     let seller_pubkey = seller_keypair.pubkey();
     let escrow_pubkey = Pubkey::from_str(&request.escrow_pubkey).unwrap();
-    // let mu: u128 = request.mu.parse().map_err(|err| warp::reject::custom(CustomClientError(err)))?;
-    let mu: u128 = request.mu.parse().map_err(|err| warp::reject::custom(CClientError::from(err)))?;
+    let mu: [u8; 32] = request.mu;
     
     let instruction = Instruction {
         program_id,
