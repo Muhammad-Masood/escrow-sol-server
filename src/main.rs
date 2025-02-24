@@ -9,7 +9,7 @@ use solana_sdk::{
     program_pack::Pack,
     pubkey::Pubkey,
 };
-use anchor_lang::InstructionData;
+use anchor_lang::{AccountDeserialize, InstructionData};
 use serde::{Deserialize, Serialize, Serializer, Deserializer};
 use warp::Filter;
 use solana_sdk::instruction::AccountMeta;
@@ -19,36 +19,74 @@ use warp::reject::Reject;
 use std::num::ParseIntError;
 use solana_client::client_error::ClientError;
 use std::time::{SystemTime, UNIX_EPOCH};
+use escrow_project::Escrow;
 // use solana_sdk::sysvar::slot_hashes;
+use serde::de::{Error as DeError};
 
-fn serialize_bytes<S>(bytes: &[u8; 48], serializer: S) -> Result<S::Ok, S::Error>
-where
-    S: Serializer,
-{
-    serializer.serialize_bytes(bytes)
+#[derive(Debug)]
+struct HexArray<const N: usize>([u8; N]);
+
+impl<const N: usize> Serialize for HexArray<N> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&hex::encode(self.0))
+    }
 }
 
-fn serialize_bytes_96<S>(bytes: &[u8; 96], serializer: S) -> Result<S::Ok, S::Error>
-where
-    S: Serializer,
-{
-    serializer.serialize_bytes(bytes)
+impl<'de, const N: usize> Deserialize<'de> for HexArray<N> {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s: &str = Deserialize::deserialize(deserializer)?;
+        let bytes = hex::decode(s).map_err(DeError::custom)?;
+        if bytes.len() != N {
+            return Err(DeError::custom(format!(
+                "Invalid length: expected {} bytes, got {} bytes",
+                N,
+                bytes.len()
+            )));
+        }
+        let mut array = [0u8; N];
+        array.copy_from_slice(&bytes);
+        Ok(HexArray(array))
+    }
 }
 
-fn deserialize_bytes<'de, D>(deserializer: D) -> Result<[u8; 48], D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let vec = Vec::<u8>::deserialize(deserializer)?;
-    vec.try_into().map_err(|_| serde::de::Error::custom("Expected 48 bytes"))
+mod hex_array_96 {
+    use serde::{Deserialize, Serialize};
+    use super::HexArray;
+
+    pub fn serialize<S>(value: &[u8; 96], serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        HexArray(*value).serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<[u8; 96], D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let array = HexArray::<96>::deserialize(deserializer)?;
+        Ok(array.0)
+    }
 }
 
-fn deserialize_bytes_96<'de, D>(deserializer: D) -> Result<[u8; 96], D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let vec = Vec::<u8>::deserialize(deserializer)?;
-    vec.try_into().map_err(|_| serde::de::Error::custom("Expected 96 bytes"))
+mod hex_array_48 {
+    use serde::{Deserialize, Serialize};
+    use super::HexArray;
+
+    pub fn serialize<S>(value: &[u8; 48], serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        HexArray(*value).serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<[u8; 48], D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let array = HexArray::<48>::deserialize(deserializer)?;
+        Ok(array.0)
+    }
 }
 
 #[derive(Debug)]
@@ -70,7 +108,7 @@ impl From<ParseIntError> for CClientError {
 }
 impl Reject for CClientError {}
 
-const PROGRAM_ID: &str = "8UVF6guKqwz7JsPzRaKRcn2Q7CZPFtZY7gXYCMhJ3uTQ";
+const PROGRAM_ID: &str = "5LthHd6oNK3QkTwC59pnn1tPFK7JJUgNjNnEptxxXSei";
 // const RPC_URL: &str = "https://api.localnet.solana.com";
 const RPC_URL: &str = "http://127.0.0.1:8899";
 
@@ -78,11 +116,11 @@ const RPC_URL: &str = "http://127.0.0.1:8899";
 struct StartSubscriptionRequest {
     query_size: u64,
     number_of_blocks: u64,
-    #[serde(serialize_with = "serialize_bytes", deserialize_with = "deserialize_bytes")]
+    #[serde(with = "hex_array_48")]
     u: [u8; 48],
-    #[serde(serialize_with = "serialize_bytes_96", deserialize_with = "deserialize_bytes_96")]
+    #[serde(with = "hex_array_96")]
     g: [u8; 96],
-    #[serde(serialize_with = "serialize_bytes_96", deserialize_with = "deserialize_bytes_96")]
+    #[serde(with = "hex_array_96")]
     v: [u8; 96],
     validate_every: i64,
     buyer_private_key: String,
@@ -100,7 +138,7 @@ struct AddFundsToSubscriptionRequest {
 struct ProveRequest {
     seller_private_key: String,
     escrow_pubkey: String,
-    #[serde(serialize_with = "serialize_bytes", deserialize_with = "deserialize_bytes")]
+    #[serde(with = "hex_array_48")]
     sigma: [u8; 48],
     mu: String,
 }
@@ -132,6 +170,11 @@ struct GenerateQueriesRequest {
 }
 
 #[derive(Serialize, Deserialize)]
+struct GetQueriesByEscrowPubKeyRequest {
+    escrow_pubkey: String,
+}
+
+#[derive(Serialize, Deserialize)]
 struct StartSubscriptionResponse {
     escrow_pubkey: String,
     subscription_id: u64,
@@ -145,6 +188,11 @@ struct ExtendSubscriptionResponse {
 #[derive(Serialize, Deserialize)]
 struct ProveResponse {
     message: String,
+}
+
+#[derive(Serialize, Deserialize)]
+struct GetQueriesByEscrowPubkeyResponse {
+    queries: Vec<(u128, u128)>, //(block index, v_i)
 }
 
 #[tokio::main]
@@ -178,13 +226,25 @@ async fn main() {
         .and(warp::path("generate_queries"))
         .and(warp::body::json())
         .and_then(generate_queries_handler);
-    
+
+    let get_queries_by_escrow_pubkey = warp::post()
+        .and(warp::path("get_queries_by_escrow_pubkey"))
+        .and(warp::body::json())
+        .and_then(get_queries_by_escrow_pubkey_handler);
+
     let request_funds = warp::post()
         .and(warp::path("request_funds"))
         .and(warp::body::json())
         .and_then(request_funds_handler);
 
-    let routes = start_subscription.or(add_funds_to_subscription).or(prove).or(end_sub_by_buyer).or(end_sub_by_seller).or(generate_queries).or(request_funds);
+    let routes = start_subscription
+        .or(add_funds_to_subscription)
+        .or(prove).or(end_sub_by_buyer)
+        .or(end_sub_by_seller)
+        .or(generate_queries)
+        .or(get_queries_by_escrow_pubkey)
+        .or(request_funds);
+
     println!("Server running at http://127.0.0.1:3030/");
     warp::serve(routes).run(([127, 0, 0, 1], 3030)).await;
 }
@@ -452,4 +512,26 @@ async fn generate_queries_handler(request: GenerateQueriesRequest) -> Result<imp
         Ok(_) => Ok(warp::reply::json(&ExtendSubscriptionResponse { message: "Queries generated successfully".to_string() })),
         Err(err) => Err(warp::reject::custom(CustomClientError(err)))
     }
+}
+
+async fn get_queries_by_escrow_pubkey_handler(
+    request: GetQueriesByEscrowPubKeyRequest,
+) -> Result<impl warp::Reply, warp::Rejection> {
+    let rpc_client = RpcClient::new(RPC_URL.to_string());
+    let escrow_pubkey = Pubkey::from_str(&request.escrow_pubkey).unwrap();
+
+    let account_data = rpc_client.get_account_data(&escrow_pubkey).unwrap();
+    let escrow_account = Escrow::try_deserialize(&mut &account_data[..]).unwrap();
+
+    let queries: Vec<(u128, [u8; 32])> = escrow_account.queries;
+
+    let transformed_queries: Vec<(u128, u128)> = queries
+        .into_iter()
+        .map(|(num, bytes)| {
+            let extracted_num = u128::from_le_bytes(bytes[..16].try_into().unwrap());
+            (num, extracted_num)
+        })
+        .collect();
+
+    Ok(warp::reply::json(&GetQueriesByEscrowPubkeyResponse { queries: transformed_queries }))
 }
