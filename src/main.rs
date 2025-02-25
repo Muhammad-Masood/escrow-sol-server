@@ -15,10 +15,12 @@ use warp::Filter;
 use solana_sdk::instruction::AccountMeta;
 use std::str::FromStr;
 use escrow_project::instruction::{AddFundsToSubscription, StartSubscription, ProveSubscription, EndSubscriptionByBuyer, EndSubscriptionBySeller, RequestFund, GenerateQueries};
+use escrow_project::Escrow;
 use warp::reject::Reject;
 use std::num::ParseIntError;
 use solana_client::client_error::ClientError;
 use std::time::{SystemTime, UNIX_EPOCH};
+use solana_sdk::borsh::try_from_slice_unchecked;
 // use solana_sdk::sysvar::slot_hashes;
 
 fn serialize_bytes<S>(bytes: &[u8; 48], serializer: S) -> Result<S::Ok, S::Error>
@@ -120,8 +122,9 @@ struct EndSubscriptionBySellerRequest {
 #[derive(Serialize, Deserialize)]
 struct RequestFundsRequest {
     subscription_id: u64,
-    buyer_pubkey: String,
-    user_private_key: String,  // Can be buyer or seller
+    buyer_pubkey: String,   // remains same in cases of request by buyer or seller
+    seller_pubkey: String,  // requried if buyer is doing request in order to get the escrow_pda
+    user_private_key: String,   // can be buyer or seller (Requester), used as a signer
     escrow_pubkey: String,
 }
 
@@ -129,6 +132,11 @@ struct RequestFundsRequest {
 struct GenerateQueriesRequest {
     escrow_pubkey: String,
     user_private_key: String,
+}
+
+#[derive(Serialize, Deserialize)]
+struct GetQueriesRequest {
+    escrow_pubkey: String,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -145,6 +153,11 @@ struct ExtendSubscriptionResponse {
 #[derive(Serialize, Deserialize)]
 struct ProveResponse {
     message: String,
+}
+
+#[derive(Serialize, Deserialize)]
+struct GetQueriesResponse {
+    queries: Vec<(u128, String)>,
 }
 
 #[tokio::main]
@@ -184,7 +197,12 @@ async fn main() {
         .and(warp::body::json())
         .and_then(request_funds_handler);
 
-    let routes = start_subscription.or(add_funds_to_subscription).or(prove).or(end_sub_by_buyer).or(end_sub_by_seller).or(generate_queries).or(request_funds);
+    let get_queries = warp::post()
+        .and(warp::path("get_queries"))
+        .and(warp::body::json())
+        .and_then(get_queries_handler);
+
+    let routes = start_subscription.or(add_funds_to_subscription).or(prove).or(end_sub_by_buyer).or(end_sub_by_seller).or(generate_queries).or(request_funds).or(get_queries);
     println!("Server running at http://127.0.0.1:3030/");
     warp::serve(routes).run(([127, 0, 0, 1], 3030)).await;
 }
@@ -380,27 +398,31 @@ async fn request_funds_handler(request: RequestFundsRequest) -> Result<impl warp
     let program_id = Pubkey::from_str(PROGRAM_ID).unwrap();
     let user_keypair = Keypair::from_base58_string(&request.user_private_key);
     let user_pubkey = user_keypair.pubkey();
-    let buyer_pubkey = Pubkey::from_str(&request.buyer_pubkey).unwrap();
-    // let escrow_pubkey = Pubkey::from_str(&request.escrow_pubkey).unwrap();
-    let subscription_id = request.subscription_id;
+    // let buyer_pubkey = Pubkey::from_str(&request.buyer_pubkey).unwrap();
+    // let seller_pubkey = Pubkey::from_str(&request.seller_pubkey).unwrap();
+    let escrow_pubkey = Pubkey::from_str(&request.escrow_pubkey).unwrap();
+    // let subscription_id = request.subscription_id;
 
-    let (escrow_pda, _bump) = Pubkey::find_program_address(
-        &[
-            b"escrow",
-            buyer_pubkey.as_ref(),
-            // Seller pubkey should be fetched from escrow state (replace this with actual seller pubkey)
-            user_pubkey.as_ref(), 
-            &subscription_id.to_le_bytes(),
-        ],
-        &program_id
-    );
+    // let (escrow_pda, _bump) = Pubkey::find_program_address(
+    //     &[
+    //         b"escrow",
+    //         buyer_pubkey.as_ref(),
+    //         // Seller pubkey should be fetched from escrow state (replace this with actual seller pubkey)
+    //         // user_pubkey.as_ref(),
+    //         seller_pubkey.as_ref(),
+    //         &subscription_id.to_le_bytes(),
+    //     ],
+    //     &program_id
+    // );
 
-    println!("Client-side PDA: {}", escrow_pda);
+    // println!("Client-side PDA: {}", escrow_pda);
+    println!("Client-side PDA: {}", escrow_pubkey);
 
     let instruction = Instruction {
         program_id,
         accounts: vec![
-            AccountMeta::new(escrow_pda, false),
+            // AccountMeta::new(escrow_pda, false),
+            AccountMeta::new(escrow_pubkey, false),
             AccountMeta::new(user_pubkey, true),
             AccountMeta::new_readonly(system_program::ID, false),
         ],
@@ -450,6 +472,29 @@ async fn generate_queries_handler(request: GenerateQueriesRequest) -> Result<imp
 
     match rpc_client.send_and_confirm_transaction(&tx) {
         Ok(_) => Ok(warp::reply::json(&ExtendSubscriptionResponse { message: "Queries generated successfully".to_string() })),
+        Err(err) => Err(warp::reject::custom(CustomClientError(err)))
+    }
+}
+
+async fn get_queries_handler(request: GetQueriesRequest) -> Result<impl warp::Reply, warp::Rejection> {
+    let rpc_client = RpcClient::new(RPC_URL.to_string());
+    let escrow_pubkey = Pubkey::from_str(&request.escrow_pubkey).unwrap();
+
+    // Escrow Account
+    let account_data = rpc_client.get_account_data(&escrow_pubkey);
+    
+    match account_data {
+        Ok(data) => {
+            let escrow: Escrow = try_from_slice_unchecked(&data).unwrap();
+
+            // Convert queries to a hex-str format for JSON
+            let formatted_queries: Vec<(u128, String)> = escrow.queries
+                .iter()
+                .map(|(block_index, v_i)| (*block_index, hex::encode(v_i)))
+                .collect();
+
+            Ok(warp::reply::json(&GetQueriesResponse { queries: formatted_queries }))
+        }
         Err(err) => Err(warp::reject::custom(CustomClientError(err)))
     }
 }
