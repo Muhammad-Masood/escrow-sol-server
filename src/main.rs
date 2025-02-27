@@ -416,6 +416,19 @@ fn reverse_endianness(input: [u8; 32]) -> [u8; 32] {
     reversed
 }
 
+fn compute_h_i_multiply_vi(queries: Vec<(u128, [u8; 32])>) -> G1Projective {
+    let mut all_h_i_multiply_vi = G1Projective::identity();
+
+    for (i, v_i_hex) in queries {
+        let h_i = perform_hash_to_curve(i); //  H(i)
+        let v_i = Scalar::from_bytes(&reverse_endianness(v_i_hex)).unwrap();    //  v_i
+        let h_i_multiply_v_i = h_i.mul(v_i);    //  H(i)^(v_i)
+
+        all_h_i_multiply_vi = all_h_i_multiply_vi.add(&h_i_multiply_v_i);
+    }
+
+    all_h_i_multiply_vi //  Π(H(i)^(v_i))
+}
 
 // Called by the Seller
 async fn prove_handler(request: ProveRequest) -> Result<impl warp::Reply, warp::Rejection> {
@@ -439,16 +452,7 @@ async fn prove_handler(request: ProveRequest) -> Result<impl warp::Reply, warp::
 
     let queries = escrow_account.queries;
 
-    let mut all_h_i_multiply_vi = G1Projective::identity();
-
-    for (i, v_i_hex) in queries {
-        let h_i = perform_hash_to_curve(i);
-        let v_i = Scalar::from_bytes(&reverse_endianness(v_i_hex)).unwrap();
-
-        let h_i_multiply_v_i = h_i.mul(v_i);
-
-        all_h_i_multiply_vi = all_h_i_multiply_vi.add(&h_i_multiply_v_i);
-    }
+    let all_h_i_multiply_vi = compute_h_i_multiply_vi(queries);
 
     let u_multiply_mu = u.mul(mu_scalar);
 
