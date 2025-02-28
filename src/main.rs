@@ -9,7 +9,7 @@ use solana_sdk::{
     program_pack::Pack,
     pubkey::Pubkey,
 };
-use anchor_lang::{AccountDeserialize, InstructionData};
+use anchor_lang::{account, AccountDeserialize, InstructionData};
 use serde::{Deserialize, Serialize, Serializer, Deserializer};
 use warp::Filter;
 use solana_sdk::instruction::AccountMeta;
@@ -232,6 +232,11 @@ struct GetQueriesByEscrowPubKeyRequest {
 }
 
 #[derive(Serialize, Deserialize)]
+struct GetEscrowDataRequest {
+    escrow_pubkey: String,
+}
+
+#[derive(Serialize, Deserialize)]
 struct StartSubscriptionResponse {
     escrow_pubkey: String,
     subscription_id: u64,
@@ -250,6 +255,31 @@ struct ProveResponse {
 #[derive(Serialize, Deserialize)]
 struct GetQueriesByEscrowPubkeyResponse {
     queries: Vec<(u128, String)>, //(block index, v_i)
+}
+
+#[derive(Serialize, Deserialize)]
+struct GetEscrowDataResponse {
+    buyer_pubkey: String,
+    seller_pubkey: String,
+
+    u: String,
+    g: String,
+    v: String,
+
+    number_of_blocks: u64,
+    query_size: u64,
+    validate_every: i64,
+    last_prove_date: i64,
+    balance: u64,
+
+    queries: Vec<(u128, String)>, //(block index, v_i)
+    queries_generation_time: i64,
+
+    is_subscription_ended_by_buyer: bool,
+    is_subscription_ended_by_seller: bool,
+
+    subscription_duration: u64,
+    subscription_id: u64,
 }
 
 #[tokio::main]
@@ -294,13 +324,19 @@ async fn main() {
         .and(warp::body::json())
         .and_then(request_funds_handler);
 
+    let get_escrow_data = warp::post()
+        .and(warp::path("get_escrow_data"))
+        .and(warp::body::json())
+        .and_then(get_escrow_data_handler);
+
     let routes = start_subscription
         .or(add_funds_to_subscription)
         .or(prove).or(end_sub_by_buyer)
         .or(end_sub_by_seller)
         .or(generate_queries)
         .or(get_queries_by_escrow_pubkey)
-        .or(request_funds);
+        .or(request_funds)
+        .or(get_escrow_data);
 
     println!("Server running at http://127.0.0.1:3030/");
     warp::serve(routes).run(([127, 0, 0, 1], 3030)).await;
@@ -654,34 +690,74 @@ async fn prove_handler(request: ProveRequest) -> Result<impl warp::Reply, warp::
     }
 }
 
+/// Handles the request to end a subscription by the buyer.
+///
+/// This function:
+/// - Parses the buyer's private key and escrow account public key.
+/// - Constructs a transaction to end the subscription by the buyer.
+/// - Signs and sends the transaction to the blockchain.
+/// - Returns a success message if the transaction is successful.
+///
+/// # Arguments
+/// - `request`: An `EndSubscriptionByBuyerRequest` containing:
+///   - Buyer's private key (Base58 encoded).
+///   - Escrow account public key.
+///
+/// # Returns
+/// - `Ok(impl warp::Reply)`: A JSON response confirming the subscription has ended.
+/// - `Err(warp::Rejection)`: A rejection in case of transaction failure.
 async fn end_subscription_by_buyer_handler(request: EndSubscriptionByBuyerRequest) -> Result<impl warp::Reply, warp::Rejection> {
+    println!("Starting end subscription by buyer handler...");
+
     let rpc_client = RpcClient::new(RPC_URL.to_string());
     let program_id = Pubkey::from_str(PROGRAM_ID).unwrap();
+
+    // Parse the buyer's private key and extract the public key
     let buyer_keypair = Keypair::from_base58_string(&request.buyer_private_key);
     let buyer_pubkey = buyer_keypair.pubkey();
-    let escrow_pubkey = Pubkey::from_str(&request.escrow_pubkey).unwrap();
+    println!("Buyer public key: {}", buyer_pubkey);
 
+    // Parse the escrow account public key
+    let escrow_pubkey = Pubkey::from_str(&request.escrow_pubkey).unwrap();
+    println!("Escrow public key: {}", escrow_pubkey);
+
+    // Construct the transaction instruction for ending the subscription
     let instruction = Instruction {
         program_id,
         accounts: vec![
-            AccountMeta::new(escrow_pubkey, false),
-            AccountMeta::new(buyer_pubkey, true),
-            // AccountMeta::new_readonly(system_program::ID, false),
+            AccountMeta::new(escrow_pubkey, false), // Escrow account
+            AccountMeta::new(buyer_pubkey, true), // Buyer account (signer)
+            // AccountMeta::new_readonly(system_program::ID, false), // Uncomment if system program needed
         ],
         data: EndSubscriptionByBuyer {}.data(),
     };
+    println!("Instruction for ending subscription created successfully");
 
+    // Fetch latest blockhash
     let blockhash = rpc_client.get_latest_blockhash().unwrap();
+    println!("Latest blockhash: {:?}", blockhash);
+
+    // Create a signed transaction
     let tx = Transaction::new_signed_with_payer(
         &[instruction],
         Some(&buyer_pubkey),
         &[&buyer_keypair],
         blockhash,
     );
+    println!("Transaction created successfully");
 
+    // Send and confirm the transaction
     match rpc_client.send_and_confirm_transaction(&tx) {
-        Ok(_) => Ok(warp::reply::json(&ExtendSubscriptionResponse { message: "Subscription ended successfully by buyer".to_string() })),
-        Err(err) => Err(warp::reject::custom(CustomClientError(err)))
+        Ok(_) => {
+            println!("Transaction sent successfully!");
+            Ok(warp::reply::json(&ExtendSubscriptionResponse {
+                message: "Subscription ended successfully by buyer".to_string()
+            }))
+        },
+        Err(err) => {
+            println!("Transaction failed: {:?}", err);
+            Err(warp::reject::custom(CustomClientError(err)))
+        }
     }
 }
 
@@ -807,4 +883,46 @@ async fn get_queries_by_escrow_pubkey_handler(
         .collect();
 
     Ok(warp::reply::json(&GetQueriesByEscrowPubkeyResponse { queries: transformed_queries }))
+}
+
+async fn get_escrow_data_handler(
+    request: GetEscrowDataRequest,
+) -> Result<impl warp::Reply, warp::Rejection> {
+    let rpc_client = RpcClient::new(RPC_URL.to_string());
+    let escrow_pubkey = Pubkey::from_str(&request.escrow_pubkey).unwrap();
+
+    let account_data = rpc_client.get_account_data(&escrow_pubkey).unwrap();
+    let escrow_account = Escrow::try_deserialize(&mut &account_data[..]).unwrap();
+
+    let queries: Vec<(u128, [u8; 32])> = escrow_account.queries;
+
+    let transformed_queries: Vec<(u128, String)> = queries
+        .into_iter()
+        .map(|(num, bytes)| {
+            let le_num_modulus_p = reverse_endianness(bytes);
+
+            let v_i = Scalar::from_bytes(&le_num_modulus_p).unwrap();
+
+            (num, v_i.to_string())
+        })
+        .collect();
+
+    Ok(warp::reply::json(&GetEscrowDataResponse {
+        buyer_pubkey: escrow_account.buyer_pubkey.to_string(),
+        seller_pubkey: escrow_account.seller_pubkey.to_string(),
+        u: hex::encode(escrow_account.u),
+        g: hex::encode(escrow_account.g),
+        v: hex::encode(escrow_account.v),
+        number_of_blocks: escrow_account.number_of_blocks,
+        query_size: escrow_account.query_size,
+        validate_every: escrow_account.validate_every,
+        last_prove_date: escrow_account.last_prove_date,
+        balance: escrow_account.balance,
+        queries: transformed_queries,
+        queries_generation_time: escrow_account.queries_generation_time,
+        is_subscription_ended_by_buyer: escrow_account.is_subscription_ended_by_buyer,
+        is_subscription_ended_by_seller: escrow_account.is_subscription_ended_by_seller,
+        subscription_duration: escrow_account.subscription_duration,
+        subscription_id: escrow_account.subscription_id,
+    }))
 }
