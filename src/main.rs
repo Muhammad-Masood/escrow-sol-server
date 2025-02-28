@@ -26,6 +26,8 @@ use serde::de::{Error as DeError};
 use bls12_381::{pairing, G1Affine, G2Affine, G1Projective, Scalar, G2Projective};
 use bls12_381::hash_to_curve::{ExpandMsgXmd, HashToCurve, HashToField};
 use sha2::{Digest, Sha256};
+use anchor_lang::solana_program::sysvar;
+use num_bigint::BigUint;
 
 #[derive(Debug)]
 struct HexArray<const N: usize>([u8; N]);
@@ -226,7 +228,7 @@ struct ProveResponse {
 
 #[derive(Serialize, Deserialize)]
 struct GetQueriesByEscrowPubkeyResponse {
-    queries: Vec<(u128, String)>, //(block index, v_i)
+    queries: Vec<(u128, String, String)>, //(block index, v_i)
 }
 
 #[tokio::main]
@@ -445,7 +447,7 @@ async fn prove_handler(request: ProveRequest) -> Result<impl warp::Reply, warp::
     let v_norm = G2Affine::from_compressed(&escrow_account.v).unwrap();
     let u = G1Affine::from_compressed(&escrow_account.u).unwrap();
 
-    let mu_in_little_endian: [u8; 32] = request.mu;
+    let mu_in_little_endian: [u8; 32] = request.mu; //todo: change to be
     let mu_scalar = Scalar::from_bytes(&mu_in_little_endian).unwrap();
 
     let sigma = G1Affine::from_compressed(&request.sigma).unwrap();
@@ -604,6 +606,7 @@ async fn generate_queries_handler(request: GenerateQueriesRequest) -> Result<imp
         program_id,
         accounts: vec![
             AccountMeta::new(escrow_pubkey, false),
+            AccountMeta::new_readonly(sysvar::slot_hashes::id(), false), // Add sysvar slot_hashes
             AccountMeta::new_readonly(system_program::ID, false),
         ],
         data: GenerateQueries {}.data(),
@@ -626,6 +629,40 @@ async fn generate_queries_handler(request: GenerateQueriesRequest) -> Result<imp
     }
 }
 
+fn num_modulus_p(num: [u8; 32]) -> [u8; 32] {
+    let p_modulus_bytes: [u8; 32] = [
+        0x73, 0xed, 0xa7, 0x53, // 0x73ed_a753
+        0x29, 0x9d, 0x7d, 0x48, // 0x299d_7d48
+        0x33, 0x39, 0xd8, 0x08, // 0x3339_d808
+        0x09, 0xa1, 0xd8, 0x05, // 0x09a1_d805
+        0x53, 0xbd, 0xa4, 0x02, // 0x53bd_a402
+        0xff, 0xfe, 0x5b, 0xfe, // 0xfffe_5bfe
+        0xff, 0xff, 0xff, 0xff, // 0xffff_ffff
+        0x00, 0x00, 0x00, 0x01  // 0x0000_0001
+    ];
+
+    // Convert both [u8; 32] arrays to BigUint (Little-Endian format)
+    let num = BigUint::from_bytes_be(&num);
+    let p = BigUint::from_bytes_be(&p_modulus_bytes);
+
+    // Perform modulo operation (num_a % p)
+    let result = &num % &p;
+
+    println!("num (big-endian)  : {}", hex::encode(num.to_bytes_be()));
+    println!("p (big-endian) : {}", hex::encode(p.to_bytes_be()));
+    println!("result            : {}", hex::encode(result.to_bytes_be()));
+
+    // Convert the result back to bytes (little-endian format)
+    let mut result_bytes: [u8; 32] = [0; 32]; // Initialize array with zeros
+    let result_vec = result.to_bytes_be(); // Get Vec<u8> in little-endian format
+
+    // Copy the Vec<u8> into the fixed-size array, handling cases where it's smaller than 32 bytes
+    let len = result_vec.len().min(32);
+    result_bytes[..len].copy_from_slice(&result_vec[..len]);
+
+    result_bytes
+}
+
 async fn get_queries_by_escrow_pubkey_handler(
     request: GetQueriesByEscrowPubKeyRequest,
 ) -> Result<impl warp::Reply, warp::Rejection> {
@@ -637,11 +674,16 @@ async fn get_queries_by_escrow_pubkey_handler(
 
     let queries: Vec<(u128, [u8; 32])> = escrow_account.queries;
 
-    let transformed_queries: Vec<(u128, String)> = queries
+    let transformed_queries: Vec<(u128, String, String)> = queries
         .into_iter()
         .map(|(num, bytes)| {
-            let extracted_num = hex::encode(bytes);
-            (num, extracted_num)
+            let extracted_num = hex::encode(bytes); //todo: remove extracted_num
+
+            let le_num_modulus_p = reverse_endianness(bytes);
+
+            let v_i = Scalar::from_bytes(&le_num_modulus_p).unwrap();
+
+            (num, extracted_num, v_i.to_string())
         })
         .collect();
 

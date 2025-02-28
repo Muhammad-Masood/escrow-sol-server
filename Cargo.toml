@@ -22,3 +22,4 @@ hex = "0.4.3"
 escrow-project = { path = "/Users/nadavshaked/Desktop/Crypto Latest/escrow-sol-program/programs/escrow-project" }
 bls12_381 = { version = "0.8.0", features = ["experimental"] }
 sha2 = "0.9.7"  # Ensure this is compatible with `bls12_381`
+num-bigint = "0.4.6"
