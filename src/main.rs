@@ -761,34 +761,73 @@ async fn end_subscription_by_buyer_handler(request: EndSubscriptionByBuyerReques
     }
 }
 
+/// Handles the request to end a subscription by the seller.
+///
+/// This function:
+/// - Parses the seller's private key and escrow account public key.
+/// - Constructs a transaction to end the subscription by the seller.
+/// - Signs and sends the transaction to the blockchain.
+/// - Returns a success message if the transaction is successful.
+///
+/// # Arguments
+/// - `request`: An `EndSubscriptionBySellerRequest` containing:
+///   - Seller's private key (Base58 encoded).
+///   - Escrow account public key.
+///
+/// # Returns
+/// - `Ok(impl warp::Reply)`: A JSON response confirming the subscription has ended.
+/// - `Err(warp::Rejection)`: A rejection in case of transaction failure.
 async fn end_subscription_by_seller_handler(request: EndSubscriptionBySellerRequest) -> Result<impl warp::Reply, warp::Rejection> {
+    println!("Starting end subscription by seller handler...");
+
     let rpc_client = RpcClient::new(RPC_URL.to_string());
     let program_id = Pubkey::from_str(PROGRAM_ID).unwrap();
+
+    // Parse the seller's private key and extract the public key
     let seller_keypair = Keypair::from_base58_string(&request.seller_private_key);
     let seller_pubkey = seller_keypair.pubkey();
-    let escrow_pubkey = Pubkey::from_str(&request.escrow_pubkey).unwrap();
+    println!("Seller public key: {}", seller_pubkey);
 
+    // Parse the escrow account public key
+    let escrow_pubkey = Pubkey::from_str(&request.escrow_pubkey).unwrap();
+    println!("Escrow public key: {}", escrow_pubkey);
+
+    // Construct the transaction instruction for ending the subscription
     let instruction = Instruction {
         program_id,
         accounts: vec![
-            AccountMeta::new(escrow_pubkey, false),
-            AccountMeta::new(seller_pubkey, true),
-            // AccountMeta::new_readonly(system_program::ID, false),
+            AccountMeta::new(escrow_pubkey, false), // Escrow account
+            AccountMeta::new(seller_pubkey, true), // Seller account (signer)
         ],
         data: EndSubscriptionBySeller {}.data(),
     };
+    println!("Instruction for ending subscription created successfully");
 
+    // Fetch latest blockhash
     let blockhash = rpc_client.get_latest_blockhash().unwrap();
+    println!("Latest blockhash: {:?}", blockhash);
+
+    // Create a signed transaction
     let tx = Transaction::new_signed_with_payer(
         &[instruction],
         Some(&seller_pubkey),
         &[&seller_keypair],
         blockhash,
     );
+    println!("Transaction created successfully");
 
+    // Send and confirm the transaction
     match rpc_client.send_and_confirm_transaction(&tx) {
-        Ok(_) => Ok(warp::reply::json(&ExtendSubscriptionResponse { message: "Subscription ended successfully by seller".to_string() })),
-        Err(err) => Err(warp::reject::custom(CustomClientError(err)))
+        Ok(_) => {
+            println!("Transaction sent successfully!");
+            Ok(warp::reply::json(&ExtendSubscriptionResponse {
+                message: "Subscription ended successfully by seller".to_string()
+            }))
+        },
+        Err(err) => {
+            println!("Transaction failed: {:?}", err);
+            Err(warp::reject::custom(CustomClientError(err)))
+        }
     }
 }
 
