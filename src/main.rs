@@ -28,6 +28,7 @@ use bls12_381::hash_to_curve::{ExpandMsgXmd, HashToCurve, HashToField};
 use sha2::{Digest, Sha256};
 use anchor_lang::solana_program::sysvar;
 use num_bigint::BigUint;
+use solana_sdk::compute_budget::ComputeBudgetInstruction;
 
 #[derive(Debug)]
 struct HexArray<const N: usize>([u8; N]);
@@ -140,16 +141,31 @@ const RPC_URL: &str = "http://127.0.0.1:8899";
 
 #[derive(Serialize, Deserialize, Debug)]
 struct StartSubscriptionRequest {
+    /// The size of the query in bytes.
     query_size: u64,
+
+    /// The duration of the subscription, measured in number of Solana blocks.
     number_of_blocks: u64,
+
+    /// A 48-byte cryptographic value (`u`), serialized as a hex string.
     #[serde(with = "hex_array_48")]
     u: [u8; 48],
+
+    /// A 96-byte cryptographic value (`g`), serialized as a hex string.
     #[serde(with = "hex_array_96")]
     g: [u8; 96],
+
+    /// A 96-byte cryptographic value (`v`), serialized as a hex string.
     #[serde(with = "hex_array_96")]
     v: [u8; 96],
+
+    /// The interval (in blocks) at which subscription validation should occur.
     validate_every: i64,
+
+    /// The buyer's private key, encoded as a Base58 string.
     buyer_private_key: String,
+
+    /// The seller's public key, encoded as a Base58 string.
     seller_pubkey: String,
 }
 
@@ -228,7 +244,7 @@ struct ProveResponse {
 
 #[derive(Serialize, Deserialize)]
 struct GetQueriesByEscrowPubkeyResponse {
-    queries: Vec<(u128, String, String)>, //(block index, v_i)
+    queries: Vec<(u128, String)>, //(block index, v_i)
 }
 
 #[tokio::main]
@@ -285,30 +301,59 @@ async fn main() {
     warp::serve(routes).run(([127, 0, 0, 1], 3030)).await;
 }
 
+/// Handles the initiation of a subscription on the Solana blockchain.
+///
+/// This function:
+/// - Parses the buyer's private key and seller's public key.
+/// - Generates a unique subscription ID.
+/// - Derives the escrow Program Derived Address (PDA).
+/// - Constructs a Solana transaction to start the subscription.
+/// - Signs and sends the transaction to the blockchain.
+/// - Returns the subscription ID and escrow public key on success, or an error if the transaction fails.
+///
+/// # Arguments
+/// - `request`: A `StartSubscriptionRequest` containing buyer's private key, seller's public key,
+///   query size, number of blocks, and other subscription parameters.
+///
+/// # Returns
+/// - `Ok(impl warp::Reply)`: A JSON response with the subscription ID and escrow public key on success.
+/// - `Err(warp::Rejection)`: A rejection in case of failure.
 async fn start_subscription_handler(request: StartSubscriptionRequest) -> Result<impl warp::Reply, warp::Rejection> {
+    println!("Starting subscription handler...");
+
     let rpc_client = RpcClient::new(RPC_URL.to_string());
     let program_id = Pubkey::from_str(PROGRAM_ID).unwrap();
+
+    // Parse buyer's private key
     let buyer_keypair = Keypair::from_base58_string(&request.buyer_private_key);
     let buyer_pubkey = buyer_keypair.pubkey();
-    let seller_pubkey = Pubkey::from_str(&request.seller_pubkey).unwrap();
-    let subscription_id = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+    println!("Buyer public key: {}", buyer_pubkey);
 
-    // let (escrow_pda, bump) = Pubkey::find_program_address(&[b"escrow", buyer_pubkey.as_ref()], &program_id);
-    
+    // Parse seller's public key
+    let seller_pubkey = Pubkey::from_str(&request.seller_pubkey).unwrap();
+    println!("Seller public key: {}", seller_pubkey);
+
+    // Generate a unique subscription ID
+    let subscription_id = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+    println!("Generated subscription ID: {}", subscription_id);
+
+    // Derive the escrow PDA (Program Derived Address)
     let (escrow_pda, bump) = Pubkey::find_program_address(&[
         b"escrow",
         buyer_pubkey.as_ref(),
         seller_pubkey.as_ref(),
         &subscription_id.to_le_bytes()
     ], &program_id);
+    println!("Escrow PDA: {}", escrow_pda);
 
+    // Construct the transaction instruction
     let instruction = Instruction {
         program_id,
         accounts: vec![
-            AccountMeta::new(escrow_pda, false),
-            AccountMeta::new(buyer_pubkey, true),
-            AccountMeta::new(seller_pubkey, false),
-            AccountMeta::new_readonly(system_program::ID, false),
+            AccountMeta::new(escrow_pda, false), // Escrow PDA
+            AccountMeta::new(buyer_pubkey, true), // Buyer account (signer)
+            AccountMeta::new(seller_pubkey, false), // Seller account
+            AccountMeta::new_readonly(system_program::ID, false), // System program
         ],
         data: StartSubscription {
             subscription_id,
@@ -320,20 +365,34 @@ async fn start_subscription_handler(request: StartSubscriptionRequest) -> Result
             validate_every: request.validate_every,
         }.data(),
     };
+    println!("Instruction created successfully");
 
+    // Fetch latest blockhash
     let blockhash = rpc_client.get_latest_blockhash().unwrap();
+    println!("Latest blockhash: {:?}", blockhash);
+
+    // Create a signed transaction
     let tx = Transaction::new_signed_with_payer(
         &[instruction],
         Some(&buyer_pubkey),
         &[&buyer_keypair],
         blockhash,
     );
+    println!("Transaction created successfully");
 
+    // Send and confirm the transaction
     match rpc_client.send_and_confirm_transaction(&tx) {
-        Ok(_) => Ok(warp::reply::json(&StartSubscriptionResponse { subscription_id: subscription_id, escrow_pubkey: escrow_pda.to_string() })),
-        // Ok(sig) => Ok(warp::reply::json(&sig)),
-        Err(err) => Err(warp::reject::custom(CustomClientError(err)))
-        // Err(err) => Err(warp::reject::custom(err)),
+        Ok(_) => {
+            println!("Transaction sent successfully!");
+            Ok(warp::reply::json(&StartSubscriptionResponse {
+                subscription_id,
+                escrow_pubkey: escrow_pda.to_string()
+            }))
+        },
+        Err(err) => {
+            println!("Transaction failed: {:?}", err);
+            Err(warp::reject::custom(CustomClientError(err)))
+        }
     }
 }
 
@@ -433,7 +492,7 @@ fn compute_h_i_multiply_vi(queries: Vec<(u128, [u8; 32])>) -> G1Projective {
 }
 
 // Called by the Seller
-async fn prove_handler(request: ProveRequest) -> Result<impl warp::Reply, warp::Rejection> {
+async fn prove_handler2(request: ProveRequest) -> Result<impl warp::Reply, warp::Rejection> {
     let rpc_client = RpcClient::new(RPC_URL.to_string());
     let program_id = Pubkey::from_str(PROGRAM_ID).unwrap();
     let seller_keypair = Keypair::from_base58_string(&request.seller_private_key);
@@ -497,6 +556,55 @@ async fn prove_handler(request: ProveRequest) -> Result<impl warp::Reply, warp::
     //     Ok(_) => Ok(warp::reply::json(&ProveResponse { message: "Proof submitted successfully".to_string() })),
     //     Err(err) => Err(warp::reject::custom(CustomClientError(err)))
     // }
+}
+
+// Called by the Seller
+async fn prove_handler(request: ProveRequest) -> Result<impl warp::Reply, warp::Rejection> {
+    let rpc_client = RpcClient::new(RPC_URL.to_string());
+    let program_id = Pubkey::from_str(PROGRAM_ID).unwrap();
+    let seller_keypair = Keypair::from_base58_string(&request.seller_private_key);
+    let seller_pubkey = seller_keypair.pubkey();
+    let escrow_pubkey = Pubkey::from_str(&request.escrow_pubkey).unwrap();
+    // let mu: u128 = request.mu.parse().map_err(|err| warp::reject::custom(CustomClientError(err)))?;
+    // let mu: u128 = request.mu.parse().map_err(|err| warp::reject::custom(CClientError::from(err)))?;
+
+    // let mu_bytes: [u8; 32] = hex::decode(&request.mu)
+    //     .map_err(|_| warp::reject::custom(CClientError { message: "Invalid hex for mu".to_string() }))?
+    //     .try_into()
+    //     .map_err(|_| warp::reject::custom(CClientError { message: "mu must be 32 bytes".to_string() }))?;
+
+    let mu_in_little_endian: [u8; 32] = request.mu; //todo: change to be
+
+    let instruction = Instruction {
+        program_id,
+        accounts: vec![
+            AccountMeta::new(escrow_pubkey, false),
+            AccountMeta::new(seller_pubkey, true),
+            // AccountMeta::new_readonly(system_program::ID, false),
+        ],
+        data: ProveSubscription {
+            sigma: request.sigma,
+            mu: mu_in_little_endian,
+            // mu: request.mu,
+        }
+            .data(),
+    };
+
+    let increase_compute_units_ix = ComputeBudgetInstruction::set_compute_unit_limit(1_400_000);
+    let increase_compute_price_ix = ComputeBudgetInstruction::set_compute_unit_price(3);
+
+    let blockhash = rpc_client.get_latest_blockhash().unwrap();
+    let tx = Transaction::new_signed_with_payer(
+        &[increase_compute_units_ix, increase_compute_price_ix, instruction],
+        Some(&seller_pubkey),
+        &[&seller_keypair],
+        blockhash,
+    );
+
+    match rpc_client.send_and_confirm_transaction(&tx) {
+        Ok(_) => Ok(warp::reply::json(&ProveResponse { message: "Proof submitted successfully".to_string() })),
+        Err(err) => Err(warp::reject::custom(CustomClientError(err)))
+    }
 }
 
 async fn end_subscription_by_buyer_handler(request: EndSubscriptionByBuyerRequest) -> Result<impl warp::Reply, warp::Rejection> {
@@ -629,40 +737,6 @@ async fn generate_queries_handler(request: GenerateQueriesRequest) -> Result<imp
     }
 }
 
-fn num_modulus_p(num: [u8; 32]) -> [u8; 32] {
-    let p_modulus_bytes: [u8; 32] = [
-        0x73, 0xed, 0xa7, 0x53, // 0x73ed_a753
-        0x29, 0x9d, 0x7d, 0x48, // 0x299d_7d48
-        0x33, 0x39, 0xd8, 0x08, // 0x3339_d808
-        0x09, 0xa1, 0xd8, 0x05, // 0x09a1_d805
-        0x53, 0xbd, 0xa4, 0x02, // 0x53bd_a402
-        0xff, 0xfe, 0x5b, 0xfe, // 0xfffe_5bfe
-        0xff, 0xff, 0xff, 0xff, // 0xffff_ffff
-        0x00, 0x00, 0x00, 0x01  // 0x0000_0001
-    ];
-
-    // Convert both [u8; 32] arrays to BigUint (Little-Endian format)
-    let num = BigUint::from_bytes_be(&num);
-    let p = BigUint::from_bytes_be(&p_modulus_bytes);
-
-    // Perform modulo operation (num_a % p)
-    let result = &num % &p;
-
-    println!("num (big-endian)  : {}", hex::encode(num.to_bytes_be()));
-    println!("p (big-endian) : {}", hex::encode(p.to_bytes_be()));
-    println!("result            : {}", hex::encode(result.to_bytes_be()));
-
-    // Convert the result back to bytes (little-endian format)
-    let mut result_bytes: [u8; 32] = [0; 32]; // Initialize array with zeros
-    let result_vec = result.to_bytes_be(); // Get Vec<u8> in little-endian format
-
-    // Copy the Vec<u8> into the fixed-size array, handling cases where it's smaller than 32 bytes
-    let len = result_vec.len().min(32);
-    result_bytes[..len].copy_from_slice(&result_vec[..len]);
-
-    result_bytes
-}
-
 async fn get_queries_by_escrow_pubkey_handler(
     request: GetQueriesByEscrowPubKeyRequest,
 ) -> Result<impl warp::Reply, warp::Rejection> {
@@ -674,16 +748,14 @@ async fn get_queries_by_escrow_pubkey_handler(
 
     let queries: Vec<(u128, [u8; 32])> = escrow_account.queries;
 
-    let transformed_queries: Vec<(u128, String, String)> = queries
+    let transformed_queries: Vec<(u128, String)> = queries
         .into_iter()
         .map(|(num, bytes)| {
-            let extracted_num = hex::encode(bytes); //todo: remove extracted_num
-
             let le_num_modulus_p = reverse_endianness(bytes);
 
             let v_i = Scalar::from_bytes(&le_num_modulus_p).unwrap();
 
-            (num, extracted_num, v_i.to_string())
+            (num, v_i.to_string())
         })
         .collect();
 
