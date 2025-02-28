@@ -593,19 +593,15 @@ async fn prove_handler(request: ProveRequest) -> Result<impl warp::Reply, warp::
     let seller_pubkey = seller_keypair.pubkey();
     let escrow_pubkey = Pubkey::from_str(&request.escrow_pubkey).unwrap();
 
-    let mu_in_little_endian: [u8; 32] = request.mu; //todo: change to be
-
     let instruction = Instruction {
         program_id,
         accounts: vec![
             AccountMeta::new(escrow_pubkey, false),
             AccountMeta::new(seller_pubkey, true),
-            // AccountMeta::new_readonly(system_program::ID, false),
         ],
         data: ProveSubscription {
             sigma: request.sigma,
-            mu: mu_in_little_endian,
-            // mu: request.mu,
+            mu: request.mu,
         }
             .data(),
     };
