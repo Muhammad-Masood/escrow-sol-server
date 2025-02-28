@@ -171,8 +171,13 @@ struct StartSubscriptionRequest {
 
 #[derive(Serialize, Deserialize)]
 struct AddFundsToSubscriptionRequest {
+    /// Buyer's private key (Base58 encoded) used to authorize the transaction.
     buyer_private_key: String,
+
+    /// Public key of the escrow account where funds will be added (Base58 encoded).
     escrow_pubkey: String,
+
+    /// Amount (in lamports) to add to the subscription.
     amount: u64,
 }
 
@@ -396,35 +401,77 @@ async fn start_subscription_handler(request: StartSubscriptionRequest) -> Result
     }
 }
 
+/// Handles adding funds to an existing subscription.
+///
+/// This function:
+/// - Parses the buyer's private key and escrow account public key.
+/// - Constructs a transaction to add funds to the subscription.
+/// - Signs and sends the transaction to the blockchain.
+/// - Returns a success message upon successful transaction execution.
+///
+/// # Arguments
+/// - `request`: An `AddFundsToSubscriptionRequest` containing:
+///   - Buyer's private key (Base58 encoded).
+///   - Escrow account public key.
+///   - Amount to add to the subscription.
+///
+/// # Returns
+/// - `Ok(impl warp::Reply)`: A JSON response confirming the extension.
+/// - `Err(warp::Rejection)`: A rejection in case of transaction failure.
 async fn add_funds_to_subscription_handler(request: AddFundsToSubscriptionRequest) -> Result<impl warp::Reply, warp::Rejection> {
+    println!("Starting add funds to subscription handler...");
+
     let rpc_client = RpcClient::new(RPC_URL.to_string());
     let program_id = Pubkey::from_str(PROGRAM_ID).unwrap();
+
+    // Parse the buyer's private key and extract the public key
     let buyer_keypair = Keypair::from_base58_string(&request.buyer_private_key);
     let buyer_pubkey = buyer_keypair.pubkey();
-    let escrow_pubkey = Pubkey::from_str(&request.escrow_pubkey).unwrap();
+    println!("Buyer public key: {}", buyer_pubkey);
 
+    // Parse the escrow account public key
+    let escrow_pubkey = Pubkey::from_str(&request.escrow_pubkey).unwrap();
+    println!("Escrow public key: {}", escrow_pubkey);
+
+    // Construct the transaction instruction for adding funds
     let instruction = Instruction {
         program_id,
         accounts: vec![
-            AccountMeta::new(escrow_pubkey, false),
-            AccountMeta::new(buyer_pubkey, true),
-            AccountMeta::new_readonly(system_program::ID, false),
+            AccountMeta::new(escrow_pubkey, false), // Escrow account
+            AccountMeta::new(buyer_pubkey, true), // Buyer account (signer)
+            AccountMeta::new_readonly(system_program::ID, false), // System program
         ],
         data: AddFundsToSubscription {
             amount: request.amount,
         }.data(),
     };
+    println!("Instruction for adding funds created successfully");
 
+    // Fetch latest blockhash
     let blockhash = rpc_client.get_latest_blockhash().unwrap();
+    println!("Latest blockhash: {:?}", blockhash);
+
+    // Create a signed transaction
     let tx = Transaction::new_signed_with_payer(
         &[instruction],
         Some(&buyer_pubkey),
         &[&buyer_keypair],
         blockhash,
     );
+    println!("Transaction created successfully");
+
+    // Send and confirm the transaction
     match rpc_client.send_and_confirm_transaction(&tx) {
-        Ok(_) => Ok(warp::reply::json(&ExtendSubscriptionResponse { message: "Subscription extended successfully".to_string() })),
-        Err(err) => Err(warp::reject::custom(CustomClientError(err)))
+        Ok(_) => {
+            println!("Transaction sent successfully!");
+            Ok(warp::reply::json(&ExtendSubscriptionResponse {
+                message: "Subscription extended successfully".to_string()
+            }))
+        },
+        Err(err) => {
+            println!("Transaction failed: {:?}", err);
+            Err(warp::reject::custom(CustomClientError(err)))
+        }
     }
 }
 
