@@ -72,7 +72,7 @@ impl From<ParseIntError> for CClientError {
 }
 impl Reject for CClientError {}
 
-const PROGRAM_ID: &str = "8UVF6guKqwz7JsPzRaKRcn2Q7CZPFtZY7gXYCMhJ3uTQ";
+const PROGRAM_ID: &str = "GXSHqMQ9t85xXt2F7HBFC4h2r5qdg7NezrXb6GxwQk9p";
 // const RPC_URL: &str = "https://api.localnet.solana.com";
 const RPC_URL: &str = "http://127.0.0.1:8899";
 
@@ -104,6 +104,7 @@ struct ProveRequest {
     escrow_pubkey: String,
     #[serde(serialize_with = "serialize_bytes", deserialize_with = "deserialize_bytes")]
     sigma: [u8; 48],
+    // mu: [u8; 32],
     mu: String,
 }
 
@@ -299,7 +300,11 @@ async fn prove_handler(request: ProveRequest) -> Result<impl warp::Reply, warp::
     let seller_pubkey = seller_keypair.pubkey();
     let escrow_pubkey = Pubkey::from_str(&request.escrow_pubkey).unwrap();
     // let mu: u128 = request.mu.parse().map_err(|err| warp::reject::custom(CustomClientError(err)))?;
-    let mu: u128 = request.mu.parse().map_err(|err| warp::reject::custom(CClientError::from(err)))?;
+    // let mu: u128 = request.mu.parse().map_err(|err| warp::reject::custom(CClientError::from(err)))?;
+    let mu_bytes: [u8; 32] = hex::decode(&request.mu)
+        .map_err(|_| warp::reject::custom(CClientError { message: "Invalid hex for mu".to_string() }))?
+        .try_into()
+        .map_err(|_| warp::reject::custom(CClientError { message: "mu must be 32 bytes".to_string() }))?;
     
     let instruction = Instruction {
         program_id,
@@ -310,7 +315,8 @@ async fn prove_handler(request: ProveRequest) -> Result<impl warp::Reply, warp::
         ],
         data: ProveSubscription {
             sigma: request.sigma,
-            mu: mu,
+            mu: mu_bytes,
+            // mu: request.mu,
         }
         .data(),
     };
@@ -398,30 +404,13 @@ async fn request_funds_handler(request: RequestFundsRequest) -> Result<impl warp
     let program_id = Pubkey::from_str(PROGRAM_ID).unwrap();
     let user_keypair = Keypair::from_base58_string(&request.user_private_key);
     let user_pubkey = user_keypair.pubkey();
-    // let buyer_pubkey = Pubkey::from_str(&request.buyer_pubkey).unwrap();
-    // let seller_pubkey = Pubkey::from_str(&request.seller_pubkey).unwrap();
     let escrow_pubkey = Pubkey::from_str(&request.escrow_pubkey).unwrap();
-    // let subscription_id = request.subscription_id;
 
-    // let (escrow_pda, _bump) = Pubkey::find_program_address(
-    //     &[
-    //         b"escrow",
-    //         buyer_pubkey.as_ref(),
-    //         // Seller pubkey should be fetched from escrow state (replace this with actual seller pubkey)
-    //         // user_pubkey.as_ref(),
-    //         seller_pubkey.as_ref(),
-    //         &subscription_id.to_le_bytes(),
-    //     ],
-    //     &program_id
-    // );
-
-    // println!("Client-side PDA: {}", escrow_pda);
     println!("Client-side PDA: {}", escrow_pubkey);
 
     let instruction = Instruction {
         program_id,
         accounts: vec![
-            // AccountMeta::new(escrow_pda, false),
             AccountMeta::new(escrow_pubkey, false),
             AccountMeta::new(user_pubkey, true),
             AccountMeta::new_readonly(system_program::ID, false),
