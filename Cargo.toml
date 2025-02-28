@@ -4,22 +4,14 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-axum = "0.7"                 # Web framework
-# actix-web = "4.0"
-tokio = { version = "1", features = ["full"] } # Async runtime
-serde = { version = "1", features = ["derive"] } # JSON serialization
-serde_json = "1"
-solana-sdk = "1.18.8"        # Solana SDK for transactions
-solana-client = "1.18.8"     # Solana client for RPC calls
-anchor-lang = "0.30.1"       # Anchor framework
-anyhow = "1.0"              # Error handling
-warp = "0.3"
-hex = "0.4.3"
-# solana-program = "2.1.13"
-# base64 = "0.13"
-# tower = "0.4"  # for middleware
-# hyper = { version = "0.14", features = ["full"] }
-escrow-project = { path = "/Users/nadavshaked/Desktop/Crypto Latest/escrow-sol-program/programs/escrow-project" }
-bls12_381 = { version = "0.8.0", features = ["experimental"] }
-sha2 = "0.9.7"  # Ensure this is compatible with `bls12_381`
-num-bigint = "0.4.6"
+tokio = { version = "1", features = ["full"] }  # Async runtime for handling async tasks
+serde = { version = "1", features = ["derive"] }    # JSON serialization/deserialization
+solana-sdk = "1.18.8"   # Solana SDK for working with the Solana blockchain
+solana-client = "1.18.8"    # Solana client for making RPC calls to interact with Solana
+anchor-lang = "0.30.1"  # Anchor framework for Solana smart contract development
+warp = "0.3"    # Web framework for building APIs
+hex = "0.4.3"   # Hex encoding/decoding
+bls12_381 = { version = "0.8.0", features = ["experimental"] }  # BLS12-381 elliptic curve
+sha2 = "0.9.7"  # SHA-2 hash functions
+
+escrow-project = { path = "/Users/nadavshaked/Desktop/Crypto Latest/escrow-sol-program/programs/escrow-project" }   # Path to local escrow project
