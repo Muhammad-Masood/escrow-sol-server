@@ -240,7 +240,10 @@ struct GetEscrowDataRequest {
 
 #[derive(Serialize, Deserialize)]
 struct StartSubscriptionResponse {
+    /// Public key of the escrow account (Base58 encoded).
     escrow_pubkey: String,
+
+    /// Subscription ID of escrow account (Base58 encoded).
     subscription_id: u64,
 }
 
@@ -299,7 +302,7 @@ async fn main() {
     let prove = warp::post()
         .and(warp::path("prove"))
         .and(warp::body::json())
-        .and_then(prove_handler);
+        .and_then(prove_handler2);
 
     let end_sub_by_buyer = warp::post()
         .and(warp::path("end_subscription_by_buyer"))
@@ -529,7 +532,7 @@ async fn prove_handler2(request: ProveRequest) -> Result<impl warp::Reply, warp:
     let v_norm = G2Affine::from_compressed(&escrow_account.v).unwrap();
     let u = G1Affine::from_compressed(&escrow_account.u).unwrap();
 
-    let mu_in_little_endian: [u8; 32] = request.mu; //todo: change to be
+    let mu_in_little_endian: [u8; 32] = reverse_endianness(request.mu);
     let mu_scalar = Scalar::from_bytes(&mu_in_little_endian).unwrap();
 
     let sigma = G1Affine::from_compressed(&request.sigma).unwrap();
