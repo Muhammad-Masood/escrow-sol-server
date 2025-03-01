@@ -302,7 +302,7 @@ async fn main() {
     let prove = warp::post()
         .and(warp::path("prove"))
         .and(warp::body::json())
-        .and_then(prove_handler2);
+        .and_then(prove_handler);
 
     let end_sub_by_buyer = warp::post()
         .and(warp::path("end_subscription_by_buyer"))
@@ -606,8 +606,8 @@ async fn prove_handler(request: ProveRequest) -> Result<impl warp::Reply, warp::
             .data(),
     };
 
-    let increase_compute_units_ix = ComputeBudgetInstruction::set_compute_unit_limit(1_400_000);
-    let increase_compute_price_ix = ComputeBudgetInstruction::set_compute_unit_price(3);
+    let increase_compute_units_ix = ComputeBudgetInstruction::set_compute_unit_limit(u32::MAX);
+    let increase_compute_price_ix = ComputeBudgetInstruction::set_compute_unit_price(5);
 
     let blockhash = rpc_client.get_latest_blockhash().unwrap();
     let tx = Transaction::new_signed_with_payer(
@@ -1039,7 +1039,15 @@ async fn get_escrow_data_handler(
     }))
 }
 
-/// Converts a `u128` into a 32-byte array, placing it in the last 16 bytes.
+/// Converts a `u128` into a 32-byte array, placing it in the last 16 bytes of the array.
+/// The first 16 bytes are set to zero, and the `u128` value is represented in big-endian format.
+/// This function is useful for converting a `u128` value into a fixed-size array for cryptographic operations, such as hashing.
+///
+/// # Parameters
+/// - `i`: A `u128` value to be converted into a 32-byte array.
+///
+/// # Returns
+/// - `[u8; 32]`: A 32-byte array where the first 16 bytes are zero, and the last 16 bytes contain the `u128` value in big-endian format.
 fn convert_u128_to_32_bytes(i: u128) -> [u8; 32] {
     let mut bytes = [0u8; 32];  // Create a 32-byte array, initially all zeros
 
@@ -1053,6 +1061,15 @@ fn convert_u128_to_32_bytes(i: u128) -> [u8; 32] {
 
 /// Performs a hash-to-curve operation on a u128 value to generate a point on the BLS12-381 curve (G1).
 /// It uses the XMD-based SHA-256 expansion method for hashing and converts the result into a G1Affine point.
+///
+/// This method is typically used in cryptographic applications where mapping arbitrary values (like `u128`)
+/// to a point on the elliptic curve is required, such as in pairing-based cryptography or signatures.
+///
+/// # Parameters
+/// - `i`: A `u128` value to be hashed and mapped to a point on the curve.
+///
+/// # Returns
+/// - `G1Affine`: A point on the BLS12-381 G1 curve in affine coordinates, suitable for cryptographic operations.
 fn perform_hash_to_curve(i: u128) -> G1Affine {
     // Define the domain separation tag (DST) for the hash-to-curve operation.
     // This DST is specific to the BLS12-381 G1 curve and the XMD SHA-256 expansion method.
@@ -1070,39 +1087,34 @@ fn perform_hash_to_curve(i: u128) -> G1Affine {
     G1Affine::from(&g)
 }
 
-/// Converts a hex string to a 32-byte array in little-endian order.
-/// Assumes the hex string is at least 32 bytes (64 hex chars).
-fn hex_to_bytes_le(hex_str: &str) -> [u8; 32] {
-    // Remove "0x" prefix if present
-    let hex_str = hex_str.strip_prefix("0x").unwrap_or(hex_str);
-
-    // Decode the hex string to bytes
-    let mut bytes = hex::decode(hex_str).expect("Invalid hex string");
-
-    // Reverse byte order for little-endian
-    bytes.reverse();
-
-    // Convert to fixed-size array of 32 bytes
-    bytes.try_into().expect("Hex string should be 32 bytes long")
-}
-
-/// Converts a big-endian hex string to a Scalar.
-fn big_endian_hex_str_to_scalar(hex_str: &str) -> Scalar {
-    // Convert hex string to little-endian bytes
-    let le_bytes = hex_to_bytes_le(hex_str);
-
-    // Convert bytes to Scalar
-    Scalar::from_bytes(&le_bytes).unwrap()
-}
-
 /// Reverses the endianness of a 32-byte array.
+/// This function takes a 32-byte array and reverses the order of its elements.
+/// It's typically used when dealing with systems that use different byte orders (endianness).
+///
+/// # Parameters
+/// - `input`: A 32-byte array that represents the data whose endianness is to be reversed.
+///
+/// # Returns
+/// - Returns a new 32-byte array with the bytes in reversed order.
 fn reverse_endianness(input: [u8; 32]) -> [u8; 32] {
     let mut reversed = input;
-    reversed.reverse(); // Reverse the byte order
+    reversed.reverse(); // Reverse the byte order in place
     reversed
 }
 
-/// Computes the product of H(i)^v_i for all queries [Π(H(i)^(v_i))].
+/// Computes the sum of H(i)^(v_i) for a list of queries.
+/// This function iterates over each query and performs the following steps:
+/// 1. Computes H(i) using a hash-to-curve function.
+/// 2. Converts v_i (a 32-byte array) to a scalar using reverse endianness.
+/// 3. Computes H(i)^(v_i), where `^` denotes scalar multiplication.
+/// 4. Adds the result to the cumulative sum `all_h_i_multiply_vi`.
+///
+/// # Parameters
+/// - `queries`: A vector of tuples, where each tuple contains a u128 value `i` and a 32-byte array `v_i_bytes`.
+///   The vector represents a series of queries to process.
+///
+/// # Returns
+/// - `G1Projective`: The resulting projective point after adding up all H(i)^(v_i) for each query - [Π(H(i)^(v_i))].
 fn compute_h_i_multiply_vi(queries: Vec<(u128, [u8; 32])>) -> G1Projective {
     let mut all_h_i_multiply_vi = G1Projective::identity();
 
