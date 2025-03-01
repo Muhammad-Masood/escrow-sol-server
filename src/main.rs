@@ -21,7 +21,7 @@ use anchor_lang::solana_program::sysvar;
 // Project-Specific Imports
 use escrow_project::{
     Escrow,
-    instruction::{AddFundsToSubscription, StartSubscription, ProveSubscription, EndSubscriptionByBuyer, EndSubscriptionBySeller, RequestFund, GenerateQueries},
+    instruction::{AddFundsToSubscription, StartSubscription, ProveSubscription, ProveSubscriptionSimulation, EndSubscriptionByBuyer, EndSubscriptionBySeller, RequestFund, GenerateQueries},
 };
 
 // Serde Imports
@@ -298,11 +298,16 @@ async fn main() {
         .and(warp::path("add_funds_to_subscription"))
         .and(warp::body::json())
         .and_then(add_funds_to_subscription_handler);
-    
+
     let prove = warp::post()
         .and(warp::path("prove"))
         .and(warp::body::json())
         .and_then(prove_handler);
+
+    let prove_simulation = warp::post()
+        .and(warp::path("prove_simulation"))
+        .and(warp::body::json())
+        .and_then(prove_simulation_handler);
 
     let end_sub_by_buyer = warp::post()
         .and(warp::path("end_subscription_by_buyer"))
@@ -336,7 +341,9 @@ async fn main() {
 
     let routes = start_subscription
         .or(add_funds_to_subscription)
-        .or(prove).or(end_sub_by_buyer)
+        .or(prove)
+        .or(prove_simulation)
+        .or(end_sub_by_buyer)
         .or(end_sub_by_seller)
         .or(generate_queries)
         .or(request_funds)
@@ -517,14 +524,53 @@ async fn add_funds_to_subscription_handler(request: AddFundsToSubscriptionReques
 }
 
 // Called by the Seller
-// TODO: Origin endpoint validate locally
-async fn prove_handler2(request: ProveRequest) -> Result<impl warp::Reply, warp::Rejection> {
+// TODO: endpoint validate by solana - have cumpute unit issue
+async fn prove_handler(request: ProveRequest) -> Result<impl warp::Reply, warp::Rejection> {
     let rpc_client = RpcClient::new(LOCAL_RPC_URL.to_string());
     let program_id = Pubkey::from_str(PROGRAM_ID).unwrap();
     let seller_keypair = Keypair::from_base58_string(&request.seller_private_key);
     let seller_pubkey = seller_keypair.pubkey();
     let escrow_pubkey = Pubkey::from_str(&request.escrow_pubkey).unwrap();
-    
+
+    let instruction = Instruction {
+        program_id,
+        accounts: vec![
+            AccountMeta::new(escrow_pubkey, false),
+            AccountMeta::new(seller_pubkey, true),
+        ],
+        data: ProveSubscription {
+            sigma: request.sigma,
+            mu: request.mu,
+        }
+            .data(),
+    };
+
+    let increase_compute_units_ix = ComputeBudgetInstruction::set_compute_unit_limit(u32::MAX);
+    let increase_compute_price_ix = ComputeBudgetInstruction::set_compute_unit_price(5);
+
+    let blockhash = rpc_client.get_latest_blockhash().unwrap();
+    let tx = Transaction::new_signed_with_payer(
+        &[increase_compute_units_ix, increase_compute_price_ix, instruction],
+        Some(&seller_pubkey),
+        &[&seller_keypair],
+        blockhash,
+    );
+
+    match rpc_client.send_and_confirm_transaction(&tx) {
+        Ok(_) => Ok(warp::reply::json(&ProveResponse { message: "Proof submitted successfully".to_string() })),
+        Err(err) => Err(warp::reject::custom(CustomClientError(err)))
+    }
+}
+
+// Called by the Seller
+// TODO: Origin endpoint validate locally
+async fn prove_simulation_handler(request: ProveRequest) -> Result<impl warp::Reply, warp::Rejection> {
+    let rpc_client = RpcClient::new(LOCAL_RPC_URL.to_string());
+    let program_id = Pubkey::from_str(PROGRAM_ID).unwrap();
+    let seller_keypair = Keypair::from_base58_string(&request.seller_private_key);
+    let seller_pubkey = seller_keypair.pubkey();
+    let escrow_pubkey = Pubkey::from_str(&request.escrow_pubkey).unwrap();
+
     let account_data = rpc_client.get_account_data(&escrow_pubkey).unwrap();
     let escrow_account = Escrow::try_deserialize(&mut &account_data[..]).unwrap();
 
@@ -553,65 +599,21 @@ async fn prove_handler2(request: ProveRequest) -> Result<impl warp::Reply, warp:
     let is_verified = left_pairing.eq(&right_pairing);
     println!("{}", is_verified);
 
-
-    Ok(warp::reply::json(&ProveResponse { message: "Proof submitted successfully".to_string() }))
-
-    // let instruction = Instruction {
-    //     program_id,
-    //     accounts: vec![
-    //         AccountMeta::new(escrow_pubkey, false),
-    //         AccountMeta::new(seller_pubkey, true),
-    //         // AccountMeta::new_readonly(system_program::ID, false),
-    //     ],
-    //     data: ProveSubscription {
-    //         sigma: request.sigma,
-    //         mu: mu,
-    //     }
-    //     .data(),
-    // };
-    //
-    // let blockhash = rpc_client.get_latest_blockhash().unwrap();
-    // let tx = Transaction::new_signed_with_payer(
-    //     &[instruction],
-    //     Some(&seller_pubkey),
-    //     &[&seller_keypair],
-    //     blockhash,
-    // );
-    //
-    // match rpc_client.send_and_confirm_transaction(&tx) {
-    //     Ok(_) => Ok(warp::reply::json(&ProveResponse { message: "Proof submitted successfully".to_string() })),
-    //     Err(err) => Err(warp::reject::custom(CustomClientError(err)))
-    // }
-}
-
-// Called by the Seller
-// TODO: endpoint validate by solana - have cumpute unit issue
-async fn prove_handler(request: ProveRequest) -> Result<impl warp::Reply, warp::Rejection> {
-    let rpc_client = RpcClient::new(LOCAL_RPC_URL.to_string());
-    let program_id = Pubkey::from_str(PROGRAM_ID).unwrap();
-    let seller_keypair = Keypair::from_base58_string(&request.seller_private_key);
-    let seller_pubkey = seller_keypair.pubkey();
-    let escrow_pubkey = Pubkey::from_str(&request.escrow_pubkey).unwrap();
-
     let instruction = Instruction {
         program_id,
         accounts: vec![
             AccountMeta::new(escrow_pubkey, false),
             AccountMeta::new(seller_pubkey, true),
         ],
-        data: ProveSubscription {
-            sigma: request.sigma,
-            mu: request.mu,
+        data: ProveSubscriptionSimulation {
+            is_verified: true
         }
             .data(),
     };
 
-    let increase_compute_units_ix = ComputeBudgetInstruction::set_compute_unit_limit(u32::MAX);
-    let increase_compute_price_ix = ComputeBudgetInstruction::set_compute_unit_price(5);
-
     let blockhash = rpc_client.get_latest_blockhash().unwrap();
     let tx = Transaction::new_signed_with_payer(
-        &[increase_compute_units_ix, increase_compute_price_ix, instruction],
+        &[instruction],
         Some(&seller_pubkey),
         &[&seller_keypair],
         blockhash,
