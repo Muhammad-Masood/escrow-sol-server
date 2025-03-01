@@ -523,20 +523,45 @@ async fn add_funds_to_subscription_handler(request: AddFundsToSubscriptionReques
     }
 }
 
-// Called by the Seller
-// TODO: endpoint validate by solana - have cumpute unit issue
+/// Handles proving a subscription with the seller's proof.
+///
+/// This function:
+/// - Parses the seller's private key and escrow account public key.
+/// - Constructs the instruction for proving the subscription with the provided `sigma` and `mu` values.
+/// - Increases compute unit limits and adjusts compute unit price to handle expensive BLS pairing operation (note: due to CU limits, this might fail).
+/// - Signs and sends the transaction to the blockchain.
+/// - Returns a success message upon successful transaction execution or an error if the transaction fails.
+///
+/// # Arguments
+/// - `request`: A `ProveRequest` containing:
+///   - Seller's private key (Base58 encoded).
+///   - Escrow account public key.
+///   - `sigma` and `mu` values for the proof.
+///
+/// # Returns
+/// - `Ok(impl warp::Reply)`: A JSON response confirming the proof submission.
+/// - `Err(warp::Rejection)`: A rejection in case of transaction failure.
 async fn prove_handler(request: ProveRequest) -> Result<impl warp::Reply, warp::Rejection> {
+    println!("Starting prove subscription handler...");
+
     let rpc_client = RpcClient::new(LOCAL_RPC_URL.to_string());
     let program_id = Pubkey::from_str(PROGRAM_ID).unwrap();
+
+    // Parse the seller's private key and extract the public key
     let seller_keypair = Keypair::from_base58_string(&request.seller_private_key);
     let seller_pubkey = seller_keypair.pubkey();
-    let escrow_pubkey = Pubkey::from_str(&request.escrow_pubkey).unwrap();
+    println!("Seller public key: {}", seller_pubkey);
 
+    // Parse the escrow account public key
+    let escrow_pubkey = Pubkey::from_str(&request.escrow_pubkey).unwrap();
+    println!("Escrow public key: {}", escrow_pubkey);
+
+    // Construct the transaction instruction for proving the subscription
     let instruction = Instruction {
         program_id,
         accounts: vec![
-            AccountMeta::new(escrow_pubkey, false),
-            AccountMeta::new(seller_pubkey, true),
+            AccountMeta::new(escrow_pubkey, false), // Escrow account
+            AccountMeta::new(seller_pubkey, true),  // Seller account (signer)
         ],
         data: ProveSubscription {
             sigma: request.sigma,
@@ -544,84 +569,145 @@ async fn prove_handler(request: ProveRequest) -> Result<impl warp::Reply, warp::
         }
             .data(),
     };
+    println!("Instruction for proving subscription created successfully");
 
+    // Increase compute unit limit and set compute unit price to handle BLS pairing
     let increase_compute_units_ix = ComputeBudgetInstruction::set_compute_unit_limit(u32::MAX);
     let increase_compute_price_ix = ComputeBudgetInstruction::set_compute_unit_price(5);
+    println!("Compute unit limit increased and price adjusted");
 
+    // Fetch latest blockhash
     let blockhash = rpc_client.get_latest_blockhash().unwrap();
+    println!("Latest blockhash: {:?}", blockhash);
+
+    // Create a signed transaction
     let tx = Transaction::new_signed_with_payer(
         &[increase_compute_units_ix, increase_compute_price_ix, instruction],
         Some(&seller_pubkey),
         &[&seller_keypair],
         blockhash,
     );
+    println!("Transaction created successfully");
 
     match rpc_client.send_and_confirm_transaction(&tx) {
-        Ok(_) => Ok(warp::reply::json(&ProveResponse { message: "Proof submitted successfully".to_string() })),
-        Err(err) => Err(warp::reject::custom(CustomClientError(err)))
+        Ok(_) => {
+            println!("Transaction sent successfully!");
+            Ok(warp::reply::json(&ProveResponse {
+                message: "Proof submitted successfully".to_string()
+            }))
+        },
+        Err(err) => {
+            println!("Transaction failed: {:?}", err);
+            Err(warp::reject::custom(CustomClientError(err)))
+        }
     }
 }
 
-// Called by the Seller
-// TODO: Origin endpoint validate locally
+/// Handles simulating the proof verification for a subscription due to compute unit limitations.
+///
+/// This function:
+/// - Parses the seller's private key and escrow account public key.
+/// - Retrieves and deserializes the escrow account data.
+/// - Validates the proof (`sigma` and `mu`) using elliptic curve operations off-chain.
+/// - Simulates the proof verification by sending a pre-verified result (`is_verified`) to the blockchain.
+/// - Signs and sends the transaction to the blockchain.
+/// - Returns a success message upon successful transaction execution or an error if the transaction fails.
+///
+/// # Arguments
+/// - `request`: A `ProveRequest` containing:
+///   - Seller's private key (Base58 encoded).
+///   - Escrow account public key.
+///   - `sigma` and `mu` values for the proof.
+///
+/// # Returns
+/// - `Ok(impl warp::Reply)`: A JSON response confirming the proof submission.
+/// - `Err(warp::Rejection)`: A rejection in case of transaction failure.
 async fn prove_simulation_handler(request: ProveRequest) -> Result<impl warp::Reply, warp::Rejection> {
+    println!("Starting prove simulation handler...");
+
     let rpc_client = RpcClient::new(LOCAL_RPC_URL.to_string());
     let program_id = Pubkey::from_str(PROGRAM_ID).unwrap();
+
+    // Parse the seller's private key and extract the public key
     let seller_keypair = Keypair::from_base58_string(&request.seller_private_key);
     let seller_pubkey = seller_keypair.pubkey();
-    let escrow_pubkey = Pubkey::from_str(&request.escrow_pubkey).unwrap();
+    println!("Seller public key: {}", seller_pubkey);
 
+    // Parse the escrow account public key
+    let escrow_pubkey = Pubkey::from_str(&request.escrow_pubkey).unwrap();
+    println!("Escrow public key: {}", escrow_pubkey);
+
+    // Retrieve and deserialize the escrow account data
     let account_data = rpc_client.get_account_data(&escrow_pubkey).unwrap();
     let escrow_account = Escrow::try_deserialize(&mut &account_data[..]).unwrap();
+    println!("Escrow account data successfully retrieved and deserialized");
 
+    // Deserialize the elliptic curve points
     let g_norm = G2Affine::from_compressed(&escrow_account.g).unwrap();
     let v_norm = G2Affine::from_compressed(&escrow_account.v).unwrap();
     let u = G1Affine::from_compressed(&escrow_account.u).unwrap();
+    println!("Elliptic curve points deserialized successfully");
 
+    // Reverse endianness for the mu value and compute the scalar
     let mu_in_little_endian: [u8; 32] = reverse_endianness(request.mu);
     let mu_scalar = Scalar::from_bytes(&mu_in_little_endian).unwrap();
+    println!("Mu value processed");
 
+    // Deserialize sigma
     let sigma = G1Affine::from_compressed(&request.sigma).unwrap();
+    println!("Sigma value deserialized");
 
+    // Compute the multiplicative sums for validation
     let queries = escrow_account.queries;
-
     let all_h_i_multiply_vi = compute_h_i_multiply_vi(queries);
-
     let u_multiply_mu = u.mul(mu_scalar);
-
     let multiplication_sum = all_h_i_multiply_vi.add(&u_multiply_mu);
     let multiplication_sum_affine = G1Affine::from(multiplication_sum);
+    println!("Multiplicative sums calculated");
 
+    // Compute pairings for validation
     let right_pairing = pairing(&multiplication_sum_affine, &v_norm);
-
     let left_pairing = pairing(&sigma, &g_norm);
-
     let is_verified = left_pairing.eq(&right_pairing);
-    println!("{}", is_verified);
+    println!("Proof verification result: {}", is_verified);
 
+    // Construct the instruction to simulate the proof validation
     let instruction = Instruction {
         program_id,
         accounts: vec![
-            AccountMeta::new(escrow_pubkey, false),
-            AccountMeta::new(seller_pubkey, true),
+            AccountMeta::new(escrow_pubkey, false), // Escrow account
+            AccountMeta::new(seller_pubkey, true),  // Seller account (signer)
         ],
         data: ProveSubscriptionSimulation {
-            is_verified: true
+            is_verified: is_verified    // Send the simulated result
         }
             .data(),
     };
+    println!("Instruction for proof simulation created successfully");
 
+    // Fetch latest blockhash
     let blockhash = rpc_client.get_latest_blockhash().unwrap();
+    println!("Latest blockhash: {:?}", blockhash);
+
+    // Create a signed transaction
     let tx = Transaction::new_signed_with_payer(
         &[instruction],
         Some(&seller_pubkey),
         &[&seller_keypair],
         blockhash,
     );
+    println!("Transaction created successfully");
 
+    // Send and confirm the transaction
     match rpc_client.send_and_confirm_transaction(&tx) {
-        Ok(_) => Ok(warp::reply::json(&ProveResponse { message: "Proof submitted successfully".to_string() })),
-        Err(err) => Err(warp::reject::custom(CustomClientError(err)))
+        Ok(_) => {
+            println!("Transaction sent successfully!");
+            Ok(warp::reply::json(&ProveResponse { message: "Proof submitted successfully".to_string() }))
+        },
+        Err(err) => {
+            println!("Transaction failed: {:?}", err);
+            Err(warp::reject::custom(CustomClientError(err)))
+        }
     }
 }
 

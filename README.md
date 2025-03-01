@@ -102,7 +102,22 @@ This endpoint allow the seller to provide a proof of a storage subscription (PoR
 }
 ```
 
-### 4. End Subscription by Buyer
+### 4. Prove Subscription Simulation
+
+This endpoint allows the seller to simulate the proof verification for a storage subscription by submitting elastic curve points (`sigma` and `mu`). It bypasses the on-chain BLS pairing operation due to compute unit limitations and sends a pre-verified result (`is_verified`) to the blockchain.
+
+**Endpoint:** `POST /prove` **Request Body:**
+
+```json
+{
+  "seller_private_key": "...",
+  "escrow_pubkey": "...",
+  "sigma": "...",
+  "mu": "..."
+}
+```
+
+### 5. End Subscription by Buyer
 
 This endpoint allows the buyer to terminate a storage subscription by interacting with the escrow account.
 
@@ -115,7 +130,7 @@ This endpoint allows the buyer to terminate a storage subscription by interactin
 }
 ```
 
-### 5. End Subscription by Seller
+### 6. End Subscription by Seller
 
 This endpoint allows the seller to terminate a storage subscription by interacting with the escrow account.
 
@@ -128,7 +143,7 @@ This endpoint allows the seller to terminate a storage subscription by interacti
 }
 ```
 
-### 6. Request Funds
+### 7. Request Funds
 
 This endpoint enables a user (buyer or seller) to request funds from an escrow account. The transaction is processed to release the funds from escrow to the requester’s account.
 
@@ -141,7 +156,7 @@ This endpoint enables a user (buyer or seller) to request funds from an escrow a
 }
 ```
 
-### 7. Generate Queries
+### 8. Generate Queries
 
 This endpoint generates queries for a given escrow account by allowing the user to submit a request for queries to be created and associated with a specific escrow.
 
@@ -154,7 +169,7 @@ This endpoint generates queries for a given escrow account by allowing the user 
 }
 ```
 
-### 8. Get Queries by Escrow
+### 9. Get Queries by Escrow
 
 This endpoint retrieves all queries associated with a particular escrow account. It provides the list of queries linked to the escrow's public key.
 
@@ -166,7 +181,7 @@ This endpoint retrieves all queries associated with a particular escrow account.
 }
 ```
 
-### 9. Get Escrow Data
+### 10. Get Escrow Data
 
 This endpoint fetches data related to a specific escrow account.
 
