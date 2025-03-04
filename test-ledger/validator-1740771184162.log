@@ -1,0 +1,42 @@
+[0m[38;5;8m[[0m2025-02-28T19:33:04.169283173Z [0m[32mINFO [0m solana_test_validator[0m[38;5;8m][0m solana-validator 1.18.26 (src:d9f20e95; feat:3241752014, client:SolanaLabs)
+[0m[38;5;8m[[0m2025-02-28T19:33:04.169415073Z [0m[32mINFO [0m solana_test_validator[0m[38;5;8m][0m Starting validator with: ArgsOs {
+        inner: [
+            "solana-test-validator",
+        ],
+    }
+[0m[38;5;8m[[0m2025-02-28T19:33:04.172606772Z [0m[33mWARN [0m solana_perf[0m[38;5;8m][0m CUDA is disabled
+[0m[38;5;8m[[0m2025-02-28T19:33:04.172727772Z [0m[32mINFO [0m solana_perf[0m[38;5;8m][0m AVX detected
+[0m[38;5;8m[[0m2025-02-28T19:33:04.172750072Z [0m[32mINFO [0m solana_perf[0m[38;5;8m][0m AVX2 detected
+[0m[38;5;8m[[0m2025-02-28T19:33:04.192542965Z [0m[32mINFO [0m solana_faucet::faucet[0m[38;5;8m][0m Faucet started. Listening on: 0.0.0.0:9900
+[0m[38;5;8m[[0m2025-02-28T19:33:04.192666965Z [0m[32mINFO [0m solana_faucet::faucet[0m[38;5;8m][0m Faucet account address: BDnzK416Se9cs8gCxxr2yU4boaviNWCZ7Z8avHAiYE5Z
+[0m[38;5;8m[[0m2025-02-28T19:33:04.202722962Z [0m[32mINFO [0m solana_validator::admin_rpc_service[0m[38;5;8m][0m started admin rpc service!
+[0m[38;5;8m[[0m2025-02-28T19:33:04.238331850Z [0m[32mINFO [0m solana_test_validator[0m[38;5;8m][0m Feature for 41tVp5qR1XwWRt5WifvtSQyuxtqQWJgEK8w91AtBqSwP deactivated
+[0m[38;5;8m[[0m2025-02-28T19:33:04.283842835Z [0m[32mINFO [0m solana_ledger::blockstore[0m[38;5;8m][0m Maximum open file descriptors: 1048576
+[0m[38;5;8m[[0m2025-02-28T19:33:04.285119934Z [0m[32mINFO [0m solana_ledger::blockstore[0m[38;5;8m][0m Opening blockstore at "test-ledger/rocksdb"
+[0m[38;5;8m[[0m2025-02-28T19:33:04.298247030Z [0m[33mWARN [0m solana_ledger::blockstore_db[0m[38;5;8m][0m Unable to detect Rocks columns: Error { message: "IO error: No such file or directory: While opening a file for sequentially reading: test-ledger/rocksdb/CURRENT: No such file or directory" }
+[0m[38;5;8m[[0m2025-02-28T19:33:08.342230585Z [0m[32mINFO [0m solana_ledger::blockstore[0m[38;5;8m][0m Opening blockstore done; blockstore open took 4.1s
+[0m[38;5;8m[[0m2025-02-28T19:33:08.420863706Z [0m[32mINFO [0m solana_metrics::metrics[0m[38;5;8m][0m metrics disabled: environment variable not found
+[0m[38;5;8m[[0m2025-02-28T19:33:08.425458024Z [0m[32mINFO [0m solana_metrics::metrics[0m[38;5;8m][0m datapoint: shred_insert_is_full total_time_ms=2i slot=0i last_index=31i num_repaired=0i num_recovered=0i
+[0m[38;5;8m[[0m2025-02-28T19:33:08.956141232Z [0m[32mINFO [0m solana_accounts_db::hardened_unpack[0m[38;5;8m][0m Extracting "test-ledger/genesis.tar.bz2"...
+[0m[38;5;8m[[0m2025-02-28T19:33:09.086499437Z [0m[32mINFO [0m solana_accounts_db::hardened_unpack[0m[38;5;8m][0m unpacked 1 entries total
+[0m[38;5;8m[[0m2025-02-28T19:33:09.086601012Z [0m[32mINFO [0m solana_accounts_db::hardened_unpack[0m[38;5;8m][0m Extracted "test-ledger/genesis.tar.bz2" in 129.23613ms
+[0m[38;5;8m[[0m2025-02-28T19:33:09.095645091Z [0m[33mWARN [0m solana_accounts_db::utils[0m[38;5;8m][0m Failed to delete contents of 'test-ledger/accounts': could not read dir: No such file or directory (os error 2)
+[0m[38;5;8m[[0m2025-02-28T19:33:09.102022119Z [0m[32mINFO [0m solana_core::validator[0m[38;5;8m][0m identity pubkey: Btx4yUzmWeA38U7beThWuwVoccMft57bdhpakH13grsL
+[0m[38;5;8m[[0m2025-02-28T19:33:09.102233867Z [0m[32mINFO [0m solana_core::validator[0m[38;5;8m][0m vote account pubkey: 5FdkSYhv3WUFSt7DEumyz7wEiFDb4kJah4JdnJ48W4v2
+[0m[38;5;8m[[0m2025-02-28T19:33:09.103691792Z [0m[33mWARN [0m solana_core::validator[0m[38;5;8m][0m authorized voter: 5FdkSYhv3WUFSt7DEumyz7wEiFDb4kJah4JdnJ48W4v2
+[0m[38;5;8m[[0m2025-02-28T19:33:09.115844004Z [0m[32mINFO [0m solana_core::validator[0m[38;5;8m][0m Initializing sigverify...
+[0m[38;5;8m[[0m2025-02-28T19:33:09.116990089Z [0m[32mINFO [0m solana_core::validator[0m[38;5;8m][0m Initializing sigverify done.
+[0m[38;5;8m[[0m2025-02-28T19:33:09.117920572Z [0m[32mINFO [0m solana_core::validator[0m[38;5;8m][0m Cleaning accounts paths..
+[0m[38;5;8m[[0m2025-02-28T19:33:09.122171727Z [0m[32mINFO [0m solana_core::validator[0m[38;5;8m][0m Cleaning accounts paths done. clean_accounts_paths took 4ms
+[0m[38;5;8m[[0m2025-02-28T19:33:09.122227356Z [0m[32mINFO [0m solana_runtime::snapshot_utils[0m[38;5;8m][0m Unable to read bank snapshots directory 'test-ledger/snapshot': No such file or directory (os error 2)
+[0m[38;5;8m[[0m2025-02-28T19:33:09.123406838Z [0m[32mINFO [0m solana_runtime::snapshot_utils[0m[38;5;8m][0m Unable to read bank snapshots directory 'test-ledger/snapshot': No such file or directory (os error 2)
+[0m[38;5;8m[[0m2025-02-28T19:33:09.123516714Z [0m[32mINFO [0m solana_runtime::snapshot_utils[0m[38;5;8m][0m Unable to read bank snapshots directory 'test-ledger/snapshot': No such file or directory (os error 2)
+[0m[38;5;8m[[0m2025-02-28T19:33:09.123547345Z [0m[32mINFO [0m solana_core::validator[0m[38;5;8m][0m Cleaning orphaned account snapshot directories..
+[0m[38;5;8m[[0m2025-02-28T19:33:09.123560289Z [0m[32mINFO [0m solana_runtime::snapshot_utils[0m[38;5;8m][0m Unable to read bank snapshots directory 'test-ledger/snapshot': No such file or directory (os error 2)
+[0m[38;5;8m[[0m2025-02-28T19:33:09.123569972Z [0m[32mINFO [0m solana_core::validator[0m[38;5;8m][0m Cleaning orphaned account snapshot directories done. clean_orphaned_account_snapshot_dirs took 13us
+[0m[38;5;8m[[0m2025-02-28T19:33:09.123609989Z [0m[32mINFO [0m solana_core::validator[0m[38;5;8m][0m Geyser plugin: accounts_update_notifier: false, transaction_notifier: false, entry_notifier: false
+[0m[38;5;8m[[0m2025-02-28T19:33:09.125062480Z [0m[32mINFO [0m solana_core::system_monitor_service[0m[38;5;8m][0m Starting SystemMonitorService
+[0m[38;5;8m[[0m2025-02-28T19:33:09.129014541Z [0m[32mINFO [0m solana_core::validator[0m[38;5;8m][0m loading ledger from "test-ledger"...
+[0m[38;5;8m[[0m2025-02-28T19:33:09.140756103Z [0m[32mINFO [0m solana_core::validator[0m[38;5;8m][0m genesis hash: DVLPRzxvQKhgebRkEZQr4F7Aytbt6rVu9DYwkrpEuAnp
+[0m[38;5;8m[[0m2025-02-28T19:33:09.140924868Z [0m[32mINFO [0m solana_ledger::blockstore[0m[38;5;8m][0m Maximum open file descriptors: 1048576
+[0m[38;5;8m[[0m2025-02-28T19:33:09.140944926Z [0m[32mINFO [0m solana_ledger::blockstore[0m[38;5;8m][0m Opening blockstore at "test-ledger/rocksdb"

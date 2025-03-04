@@ -21,7 +21,7 @@ use std::num::ParseIntError;
 use solana_client::client_error::ClientError;
 use std::time::{SystemTime, UNIX_EPOCH};
 use solana_sdk::borsh::try_from_slice_unchecked;
-// use solana_sdk::sysvar::slot_hashes;
+use solana_sdk::sysvar::slot_hashes;
 
 fn serialize_bytes<S>(bytes: &[u8; 48], serializer: S) -> Result<S::Ok, S::Error>
 where
@@ -443,6 +443,7 @@ async fn generate_queries_handler(request: GenerateQueriesRequest) -> Result<imp
         program_id,
         accounts: vec![
             AccountMeta::new(escrow_pubkey, false),
+            AccountMeta::new_readonly(slot_hashes::id(), false),
             AccountMeta::new_readonly(system_program::ID, false),
         ],
         data: GenerateQueries {}.data(),
